@@ -1,0 +1,59 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: moex-analytics
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5445}/${DB_NAME:moex}
+    username: ${DB_USER:moex}
+    password: ${DB_PASSWORD:moex}
+
+  jpa:
+    hibernate:
+      ddl-auto: none          # схемой управляет Flyway
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 100
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000     # 5 минут по умолчанию
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+# Настройки приложения
+moex:
+  base-url: https://iss.moex.com/iss
+  sync:
+    enabled: true
+    cron: "0 */15 * * * *"      # каждые 15 минут
+  http:
+    connect-timeout-ms: 5000
+    read-timeout-ms: 20000
+    max-retries: 3
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    org.example: INFO

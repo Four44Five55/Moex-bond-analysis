@@ -1,0 +1,31 @@
+import { apiGetWithClient, apiPost, apiDelete } from "../../shared/api/client";
+import type {
+  Account,
+  AccountRequest,
+  AddTransactionRequest,
+  IncomeEvent,
+  PortfolioSummary,
+  Position,
+  TaxBreakdown,
+  Transaction,
+} from "./types";
+
+const A = "/accounts";
+
+export const portfolioApi = {
+  listAccounts: () => apiGetWithClient<Account[]>(A),
+  getAccount: (id: number) => apiGetWithClient<Account>(`${A}/${id}`),
+  createAccount: (req: AccountRequest) => apiPost<Account>(A, req, true),
+  deleteAccount: (id: number) => apiDelete<void>(`${A}/${id}`, true),
+
+  listTransactions: (id: number) => apiGetWithClient<Transaction[]>(`${A}/${id}/transactions`),
+  addTransaction: (id: number, req: AddTransactionRequest) =>
+    apiPost<Transaction>(`${A}/${id}/transactions`, req, true),
+  deleteTransaction: (id: number, txId: number) =>
+    apiDelete<void>(`${A}/${id}/transactions/${txId}`, true),
+
+  positions: (id: number) => apiGetWithClient<Position[]>(`${A}/${id}/positions`),
+  summary: (id: number) => apiGetWithClient<PortfolioSummary>(`${A}/${id}/summary`),
+  income: (id: number) => apiGetWithClient<IncomeEvent[]>(`${A}/${id}/income`),
+  tax: (id: number) => apiGetWithClient<TaxBreakdown>(`${A}/${id}/tax`),
+};

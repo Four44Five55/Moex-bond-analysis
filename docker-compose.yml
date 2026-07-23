@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: moex-postgres
+    environment:
+      POSTGRES_DB: moex
+      POSTGRES_USER: moex
+      POSTGRES_PASSWORD: moex
+    ports:
+      - "5445:5432"
+    volumes:
+      - moex-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moex -d moex"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: moex-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  moex-pgdata:
