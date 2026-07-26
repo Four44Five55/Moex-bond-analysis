@@ -1,4 +1,4 @@
-package org.example.infrastructure.moex;
+package org.example.infrastructure.http;
 
 import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
@@ -18,14 +18,17 @@ import java.util.List;
  * Доверие сертификатам как из JDK cacerts, так и из системного хранилища Windows-ROOT.
  * Нужно в корпоративных сетях с TLS-инспекцией (прокси подписывает свои сертификаты
  * корневым CA, установленным в Windows, но отсутствующим в JDK).
+ * <p>
+ * Живёт в общем пакете, а не рядом с клиентом MOEX: за внешними данными приложение ходит
+ * не только в MOEX (ещё и в ЦБ за ключевой ставкой), и TLS-инспекция ломает их одинаково.
  */
-final class CompositeTrust {
+public final class CompositeTrust {
     private static final Logger logger = LoggerFactory.getLogger(CompositeTrust.class);
 
     private CompositeTrust() {
     }
 
-    static void apply(OkHttpClient.Builder builder) {
+    public static void apply(OkHttpClient.Builder builder) {
         try {
             List<X509TrustManager> managers = new ArrayList<>();
             managers.add(trustManager(null));                 // JDK cacerts

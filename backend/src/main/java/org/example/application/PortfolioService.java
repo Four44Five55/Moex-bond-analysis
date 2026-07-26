@@ -78,8 +78,7 @@ public class PortfolioService {
     private final DepositService depositService;
     private final DepositCalculator depositCalculator;
     private final DepositTaxCalculator depositTaxCalculator;
-    /** Максимальная ключевая ставка ЦБ за год: задаёт необлагаемый вычет по процентам вкладов. */
-    private final double keyRatePct;
+    private final KeyRateService keyRateService;
 
     public PortfolioService(AccountService accountService,
                             TransactionRepository transactionRepository,
@@ -98,13 +97,13 @@ public class PortfolioService {
                             DepositService depositService,
                             DepositCalculator depositCalculator,
                             DepositTaxCalculator depositTaxCalculator,
-                            @Value("${app.tax.key-rate-pct}") double keyRatePct) {
+                            KeyRateService keyRateService) {
         this.cashMovementRepository = cashMovementRepository;
         this.cashBalanceCalculator = cashBalanceCalculator;
         this.depositService = depositService;
         this.depositCalculator = depositCalculator;
         this.depositTaxCalculator = depositTaxCalculator;
-        this.keyRatePct = keyRatePct;
+        this.keyRateService = keyRateService;
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
         this.instrumentRepository = instrumentRepository;
@@ -352,7 +351,7 @@ public class PortfolioService {
         double interest = deposits.stream()
                 .mapToDouble(d -> depositCalculator.interestReceivedBetween(d, yearStart, yearEnd))
                 .sum();
-        return depositTaxCalculator.compute(interest, keyRatePct);
+        return depositTaxCalculator.compute(interest, keyRateService.maxForYear(today.getYear()));
     }
 
     /** Накопитель сумм по счетам — иначе метод свёлся бы к десятку скачущих локальных переменных. */

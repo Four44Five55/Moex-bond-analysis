@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
@@ -28,6 +29,16 @@ public class RedisConfig {
                 .entryTtl(Duration.ofMinutes(5))
                 .disableCachingNullValues()
                 .serializeValuesWith(SerializationPair.fromSerializer(serializer));
+    }
+
+    /**
+     * Ключевая ставка ЦБ меняется несколько раз в год, а не раз в пять минут: держать её
+     * на общем TTL значило бы дёргать внешний SOAP-сервис сотни раз в сутки ради константы.
+     */
+    @Bean
+    public RedisCacheManagerBuilderCustomizer keyRateCacheTtl(RedisCacheConfiguration base) {
+        return builder -> builder.withCacheConfiguration("keyRate",
+                base.entryTtl(Duration.ofHours(12)));
     }
 
     /**

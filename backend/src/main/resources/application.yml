@@ -42,10 +42,9 @@ spring:
 # Настройки приложения
 app:
   tax:
-    # Максимальная ключевая ставка ЦБ за текущий год. Задаёт необлагаемый вычет по процентам
-    # вкладов (1 млн ₽ × ставка). Источника в MOEX ISS для неё нет, поэтому значение задаётся
-    # руками и требует проверки при каждом изменении ставки — иначе налог по вкладам поедет.
-    key-rate-pct: ${KEY_RATE_PCT:21.0}
+    # Запасная ключевая ставка: берётся, только если веб-сервис ЦБ недоступен.
+    # В норме максимум за год приходит из ЦБ (см. cbr.service-url).
+    key-rate-fallback-pct: ${KEY_RATE_PCT:16.0}
 
   cors:
     # Vite dev/preview. Переопределяется переменной CORS_ORIGINS (через запятую) при выносе с localhost.
@@ -60,6 +59,11 @@ moex:
     connect-timeout-ms: 5000
     read-timeout-ms: 20000
     max-retries: 3
+
+# Ключевая ставка ЦБ — нужна вычету по вкладам; в MOEX ISS её нет
+cbr:
+  service-url: https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx
+  timeout-ms: 15000
 
 springdoc:
   swagger-ui:
