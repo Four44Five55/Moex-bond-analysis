@@ -7,6 +7,7 @@ import type {
   AllocationSlice,
   IncomeEvent,
   PortfolioHistory,
+  PortfolioOverview,
   PortfolioSummary,
   Position,
   TaxBreakdown,
@@ -27,6 +28,8 @@ export const portfolioApi = {
   deleteTransaction: (id: number, txId: number) =>
     apiDelete<void>(`${A}/${id}/transactions/${txId}`, true),
 
+  /** Страница счёта целиком — вместо пяти запросов, каждый из которых пересчитывал портфель заново. */
+  overview: (id: number) => apiGetWithClient<PortfolioOverview>(`${A}/${id}/overview`),
   positions: (id: number) => apiGetWithClient<Position[]>(`${A}/${id}/positions`),
   summary: (id: number) => apiGetWithClient<PortfolioSummary>(`${A}/${id}/summary`),
   allocation: (id: number, by: AllocationDimension) =>

@@ -61,7 +61,11 @@ public class CandleService {
     /**
      * Отрезки запрошенного периода, которых нет в БД: «голова» до самой ранней сохранённой свечи
      * и «хвост» после самой поздней. Хвост берётся <b>включая</b> последнюю сохранённую дату —
-     * свеча текущего дня могла быть записана незакрытой и должна перезаписаться.
+     * свеча за неё могла быть записана незакрытой и должна перезаписаться.
+     * <p>
+     * Хвост нужен и тогда, когда сохранённая история уже дотягивается до конца периода,
+     * но последняя свеча — за сегодня: она заведомо незакрыта, и без перезапроса цена
+     * закрытия навсегда осталась бы такой, какой была в момент первой загрузки за день.
      */
     private List<DateRange> missingRanges(List<Candle> stored, LocalDate from, LocalDate to) {
         if (stored.isEmpty()) {
@@ -74,7 +78,7 @@ public class CandleService {
         if (earliest.isAfter(from)) {
             gaps.add(new DateRange(from, earliest));
         }
-        if (latest.isBefore(to)) {
+        if (latest.isBefore(to) || latest.isEqual(LocalDate.now())) {
             gaps.add(new DateRange(latest, to));
         }
         return gaps;

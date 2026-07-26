@@ -23,6 +23,7 @@ import org.example.domain.port.CorporateActionsProvider;
 import org.example.web.dto.portfolio.AllocationSliceDto;
 import org.example.web.dto.portfolio.IncomeEventDto;
 import org.example.web.dto.portfolio.PortfolioHistoryDto;
+import org.example.web.dto.portfolio.PortfolioOverviewDto;
 import org.example.web.dto.portfolio.PortfolioSummaryDto;
 import org.example.web.dto.portfolio.PositionDto;
 import org.example.web.dto.portfolio.ValuePointDto;
@@ -95,7 +96,12 @@ public class PortfolioService {
                                 double openCost, double marketValue, double unrealizedPnl) {
     }
 
+    /**
+     * @param instruments бумаги всех сделок счёта (не только открытых позиций) — держим в снапшоте,
+     *                    чтобы расчёт полученных выплат не перечитывал их из БД второй раз.
+     */
     private record Snapshot(Account account, List<Transaction> transactions,
+                            Map<String, Instrument> instruments,
                             List<PositionView> positions,
                             List<RealizedSale> realizedSales, double totalCommission) {
     }
@@ -125,12 +131,35 @@ public class PortfolioService {
     /** Фактически полученные выплаты: только даты в прошлом и только если на дату отсечки была позиция. */
     public List<IncomeEventDto> received(String clientId, Long accountId) {
         Account account = accountService.getOwned(clientId, accountId);
-        boolean couponTaxable = isCouponTaxable(account);
         List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
-        return realizedIncomeEvents(txns).stream()
-                .sorted(Comparator.comparing(IncomeEvent::date).reversed())
-                .map(e -> toIncomeDto(e, account, couponTaxable))
-                .toList();
+        return toReceivedDtos(realizedIncomeEvents(txns, loadInstruments(txns)), account);
+    }
+
+    /**
+     * Всё, что нужно странице счёта, из <b>одного</b> снапшота: сводка, позиции, прогноз выплат,
+     * полученные выплаты и налог.
+     * <p>
+     * Раздельные вызовы {@code summary/positions/income/received/tax} дают тот же результат,
+     * но каждый строит снапшот заново — это четыре прогона FIFO и четыре обхода выплат на одну
+     * загрузку страницы. Здесь снапшот строится один раз, прогноз обходится один раз,
+     * и его же переиспользует расчёт налога.
+     */
+    public PortfolioOverviewDto overview(String clientId, Long accountId) {
+        Account account = accountService.getOwned(clientId, accountId);
+        Snapshot s = snapshot(account);
+        boolean couponTaxable = isCouponTaxable(account);
+
+        List<IncomeEvent> forecast = rawIncomeEvents(s);
+        double[] annual = projectedAnnualIncome(forecast);
+        TaxBreakdown tax = computeTax(account, s.realizedSales(), annual);
+        List<IncomeEvent> realized = realizedIncomeEvents(s.transactions(), s.instruments());
+
+        return new PortfolioOverviewDto(
+                summaryOf(s, annual, tax.totalTax(), realized),
+                s.positions().stream().map(this::toDto).toList(),
+                forecast.stream().map(e -> toIncomeDto(e, account, couponTaxable)).toList(),
+                toReceivedDtos(realized, account),
+                tax);
     }
 
     /** Аллокация портфеля по измерению (тип/сектор/валюта) — доли по рыночной стоимости позиций. */
@@ -236,7 +265,7 @@ public class PortfolioService {
                     ? -(money + t.getCommission())
                     : money - t.getCommission()));
         }
-        realizedIncomeEvents(txns).forEach(e -> flows.add(new CashFlow(e.date(), e.gross())));
+        realizedIncomeEvents(txns, instruments).forEach(e -> flows.add(new CashFlow(e.date(), e.gross())));
 
         double terminalValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
         if (terminalValue > 0) {
@@ -249,20 +278,23 @@ public class PortfolioService {
         Account account = accountService.getOwned(clientId, accountId);
         Snapshot s = snapshot(account);
 
-        double invested = s.positions().stream().mapToDouble(PositionView::openCost).sum();
-        double marketValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
-        double unrealized = marketValue - invested;
-        double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
-
         // Прогноз считается один раз и переиспользуется в налоге — обход выплат ходит во внешний источник
         double[] annual = projectedAnnualIncome(rawIncomeEvents(s));
-        double projectedIncome = annual[0] + annual[1];
         double estimatedTax = computeTax(account, s.realizedSales(), annual).totalTax();
-        double receivedIncome = realizedIncomeEvents(s.transactions()).stream()
-                .mapToDouble(IncomeEvent::gross).sum();
+        return summaryOf(s, annual, estimatedTax,
+                realizedIncomeEvents(s.transactions(), s.instruments()));
+    }
 
-        return new PortfolioSummaryDto(invested, marketValue, unrealized, realized,
-                s.totalCommission(), receivedIncome, projectedIncome, estimatedTax, s.positions().size());
+    private PortfolioSummaryDto summaryOf(Snapshot s, double[] annual, double estimatedTax,
+                                          List<IncomeEvent> realizedIncome) {
+        double invested = s.positions().stream().mapToDouble(PositionView::openCost).sum();
+        double marketValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
+        double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
+        double receivedIncome = realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
+
+        return new PortfolioSummaryDto(invested, marketValue, marketValue - invested, realized,
+                s.totalCommission(), receivedIncome, annual[0] + annual[1], estimatedTax,
+                s.positions().size());
     }
 
     // --- Ядро расчёта ---
@@ -271,10 +303,8 @@ public class PortfolioService {
         List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
         double totalCommission = txns.stream().mapToDouble(Transaction::getCommission).sum();
 
-        Map<String, List<Transaction>> bySec = txns.stream()
-                .collect(Collectors.groupingBy(Transaction::getSecId, LinkedHashMap::new, Collectors.toList()));
-        Map<String, Instrument> instruments = instrumentRepository.findAllBySecIdIn(new ArrayList<>(bySec.keySet()))
-                .stream().collect(Collectors.toMap(Instrument::getSecId, i -> i));
+        Map<String, List<Transaction>> bySec = groupBySecId(txns);
+        Map<String, Instrument> instruments = loadInstruments(txns);
 
         List<PositionView> positions = new ArrayList<>();
         List<RealizedSale> realized = new ArrayList<>();
@@ -298,16 +328,28 @@ public class PortfolioService {
                         marketValue, marketValue - openCost));
             }
         }
-        return new Snapshot(account, txns, positions, realized, totalCommission);
+        return new Snapshot(account, txns, instruments, positions, realized, totalCommission);
     }
 
-    /** Реально полученные выплаты по истории сделок: событие в прошлом × позиция на дату отсечки. */
-    private List<IncomeEvent> realizedIncomeEvents(List<Transaction> txns) {
-        Map<String, List<Transaction>> bySec = txns.stream()
+    private Map<String, List<Transaction>> groupBySecId(List<Transaction> txns) {
+        return txns.stream()
                 .collect(Collectors.groupingBy(Transaction::getSecId, LinkedHashMap::new, Collectors.toList()));
-        Map<String, Instrument> instruments = instrumentRepository.findAllBySecIdIn(new ArrayList<>(bySec.keySet()))
-                .stream().collect(Collectors.toMap(Instrument::getSecId, i -> i));
+    }
 
+    /** Бумаги всех сделок, по коду. Единственное место, где инструменты счёта читаются из БД. */
+    private Map<String, Instrument> loadInstruments(List<Transaction> txns) {
+        List<String> secIds = txns.stream().map(Transaction::getSecId).distinct().toList();
+        return instrumentRepository.findAllBySecIdIn(secIds).stream()
+                .collect(Collectors.toMap(Instrument::getSecId, i -> i));
+    }
+
+    /**
+     * Реально полученные выплаты по истории сделок: событие в прошлом × позиция на дату отсечки.
+     * Карта инструментов передаётся вызывающим — он её уже загрузил.
+     */
+    private List<IncomeEvent> realizedIncomeEvents(List<Transaction> txns,
+                                                   Map<String, Instrument> instruments) {
+        Map<String, List<Transaction>> bySec = groupBySecId(txns);
         LocalDate today = LocalDate.now();
         List<IncomeEvent> events = new ArrayList<>();
         for (var entry : bySec.entrySet()) {
@@ -413,6 +455,15 @@ public class PortfolioService {
         String name = p.instrument() != null ? p.instrument().getShortName() : p.secId();
         return new PositionDto(p.secId(), type, name, p.quantity(), avgCost, p.openCost(),
                 currentPrice, p.marketValue(), p.unrealizedPnl(), unrealizedPct);
+    }
+
+    /** Полученные выплаты — новыми вперёд. */
+    private List<IncomeEventDto> toReceivedDtos(List<IncomeEvent> events, Account account) {
+        boolean couponTaxable = isCouponTaxable(account);
+        return events.stream()
+                .sorted(Comparator.comparing(IncomeEvent::date).reversed())
+                .map(e -> toIncomeDto(e, account, couponTaxable))
+                .toList();
     }
 
     private IncomeEventDto toIncomeDto(IncomeEvent e, Account account, boolean couponTaxable) {

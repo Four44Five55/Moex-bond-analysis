@@ -5,6 +5,7 @@ import org.example.domain.portfolio.tax.TaxBreakdown;
 import org.example.web.dto.portfolio.AllocationSliceDto;
 import org.example.web.dto.portfolio.IncomeEventDto;
 import org.example.web.dto.portfolio.PortfolioHistoryDto;
+import org.example.web.dto.portfolio.PortfolioOverviewDto;
 import org.example.web.dto.portfolio.PortfolioSummaryDto;
 import org.example.web.dto.portfolio.PositionDto;
 import org.springframework.web.bind.annotation.*;
@@ -22,6 +23,16 @@ public class PortfolioController {
 
     public PortfolioController(PortfolioService portfolioService) {
         this.portfolioService = portfolioService;
+    }
+
+    /**
+     * Сводка, позиции, выплаты и налог одним ответом — то, что рисует страница счёта.
+     * Отдельные эндпоинты ниже дают то же самое по частям, но каждый строит снапшот портфеля заново.
+     */
+    @GetMapping("/overview")
+    public PortfolioOverviewDto overview(@RequestHeader(CLIENT) String clientId,
+                                         @PathVariable Long accountId) {
+        return portfolioService.overview(clientId, accountId);
     }
 
     @GetMapping("/positions")

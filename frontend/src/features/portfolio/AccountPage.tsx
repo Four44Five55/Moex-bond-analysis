@@ -38,8 +38,8 @@ export function AccountPage() {
   const [historyMonths, setHistoryMonths] = useState(12);
 
   const account = useQuery({ queryKey: ["account", id, "meta"], queryFn: () => portfolioApi.getAccount(id) });
-  const summary = useQuery({ queryKey: ["account", id, "summary"], queryFn: () => portfolioApi.summary(id) });
-  const positions = useQuery({ queryKey: ["account", id, "positions"], queryFn: () => portfolioApi.positions(id) });
+  // Сводка, позиции, выплаты и налог приходят вместе: серверу это один снапшот портфеля вместо пяти
+  const overview = useQuery({ queryKey: ["account", id, "overview"], queryFn: () => portfolioApi.overview(id) });
   const allocation = useQuery({
     queryKey: ["account", id, "allocation", allocBy],
     queryFn: () => portfolioApi.allocation(id, allocBy),
@@ -48,9 +48,6 @@ export function AccountPage() {
     queryKey: ["account", id, "history", historyMonths],
     queryFn: () => portfolioApi.valueSeries(id, historyMonths),
   });
-  const income = useQuery({ queryKey: ["account", id, "income"], queryFn: () => portfolioApi.income(id) });
-  const received = useQuery({ queryKey: ["account", id, "received"], queryFn: () => portfolioApi.received(id) });
-  const tax = useQuery({ queryKey: ["account", id, "tax"], queryFn: () => portfolioApi.tax(id) });
   const txns = useQuery({ queryKey: ["account", id, "txns"], queryFn: () => portfolioApi.listTransactions(id) });
 
   const removeTxn = useMutation({
@@ -58,8 +55,11 @@ export function AccountPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["account", id] }),
   });
 
-  const s = summary.data;
-  const t = tax.data;
+  const s = overview.data?.summary;
+  const t = overview.data?.tax;
+  const positions = overview.data?.positions;
+  const income = overview.data?.income;
+  const received = overview.data?.received;
 
   // Пересоздание массива на каждый рендер заставило бы график пересобираться заново
   const historySeries = useMemo(
@@ -139,8 +139,8 @@ export function AccountPage() {
 
       <section className="panel">
         <h2>Позиции</h2>
-        {positions.data && positions.data.length === 0 && <div className="empty">Нет открытых позиций.</div>}
-        {positions.data && positions.data.length > 0 && (
+        {positions && positions.length === 0 && <div className="empty">Нет открытых позиций.</div>}
+        {positions && positions.length > 0 && (
           <div className="table-wrap">
             <table>
               <thead>
@@ -151,7 +151,7 @@ export function AccountPage() {
                 </tr>
               </thead>
               <tbody>
-                {positions.data.map((p) => (
+                {positions.map((p) => (
                   <tr key={p.secId}>
                     <td><Link to={`/instrument/${p.secId}`} className="link">{p.secId}</Link></td>
                     <td>{p.name}</td>
@@ -196,15 +196,15 @@ export function AccountPage() {
       <div className="two-col">
         <section className="panel">
           <h2>Доходный календарь</h2>
-          {income.data && income.data.length === 0 && <div className="empty">Нет предстоящих выплат.</div>}
-          {income.data && income.data.length > 0 && (
+          {income && income.length === 0 && <div className="empty">Нет предстоящих выплат.</div>}
+          {income && income.length > 0 && (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr><th>Дата</th><th>Бумага</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
                 </thead>
                 <tbody>
-                  {income.data.slice(0, 20).map((e, i) => (
+                  {income.slice(0, 20).map((e, i) => (
                     <tr key={i}>
                       <td>{date(e.date)}</td>
                       <td>{e.secId}</td>
@@ -238,17 +238,17 @@ export function AccountPage() {
 
       <section className="panel">
         <h2>Полученные выплаты</h2>
-        {received.data && received.data.length === 0 && (
+        {received && received.length === 0 && (
           <div className="empty">Пока не было выплат: на даты отсечек по этому счёту позиций не было.</div>
         )}
-        {received.data && received.data.length > 0 && (
+        {received && received.length > 0 && (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr><th>Дата</th><th>Бумага</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
               </thead>
               <tbody>
-                {received.data.slice(0, 50).map((e, i) => (
+                {received.slice(0, 50).map((e, i) => (
                   <tr key={i}>
                     <td>{date(e.date)}</td>
                     <td>{e.secId}</td>

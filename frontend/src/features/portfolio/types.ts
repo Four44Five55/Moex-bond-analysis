@@ -111,3 +111,12 @@ export interface TaxBreakdown {
   totalTax: number;
   notes: string;
 }
+
+/** Содержимое страницы счёта одним ответом: сервер строит снапшот портфеля один раз, а не на панель. */
+export interface PortfolioOverview {
+  summary: PortfolioSummary;
+  positions: Position[];
+  income: IncomeEvent[];
+  received: IncomeEvent[];
+  tax: TaxBreakdown;
+}
