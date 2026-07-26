@@ -50,6 +50,7 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
     mutationFn: (req: AddTransactionRequest) => portfolioApi.addTransaction(accountId, req),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["account", accountId] });
+      qc.invalidateQueries({ queryKey: ["accounts"] }); // сводка по всем счетам тоже устарела
       onDone?.();
     },
   });

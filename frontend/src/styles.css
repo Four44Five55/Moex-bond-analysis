@@ -359,6 +359,10 @@ tbody tr:hover { background: var(--panel-2); }
 .account-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .account-head { display: flex; justify-content: space-between; align-items: center; }
 .account-name { font-size: 16px; font-weight: 600; color: var(--accent); }
+.muted-row { opacity: 0.55; }
+.cash-balance { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.account-value { font-size: 20px; font-weight: 600; margin-top: 10px; font-variant-numeric: tabular-nums; }
+.account-pnl { font-size: 13px; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .account-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
 .account-card .x, .txn-form + * .x { background: none; border: none; color: var(--muted); cursor: pointer; }
 

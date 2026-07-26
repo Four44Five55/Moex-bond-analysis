@@ -7,6 +7,11 @@ import org.example.domain.portfolio.allocation.AllocationCalculator;
 import org.example.domain.portfolio.allocation.AllocationDimension;
 import org.example.domain.portfolio.allocation.AllocationDimensionFactory;
 import org.example.domain.portfolio.allocation.Holding;
+import org.example.domain.portfolio.cash.CashBalanceCalculator;
+import org.example.domain.portfolio.deposit.DepositCalculator;
+import org.example.domain.portfolio.deposit.DepositTaxBreakdown;
+import org.example.domain.portfolio.deposit.DepositTaxCalculator;
+import org.example.infrastructure.persistence.CashMovementRepository;
 import org.example.domain.portfolio.history.CashFlow;
 import org.example.domain.portfolio.history.DatedTrade;
 import org.example.domain.portfolio.history.PortfolioValueCalculator;
@@ -20,7 +25,10 @@ import org.example.domain.portfolio.tax.TaxStrategyFactory;
 import org.example.infrastructure.persistence.InstrumentRepository;
 import org.example.infrastructure.persistence.TransactionRepository;
 import org.example.domain.port.CorporateActionsProvider;
+import org.example.web.dto.portfolio.AccountLineDto;
 import org.example.web.dto.portfolio.AllocationSliceDto;
+import org.example.web.dto.portfolio.ConsolidatedOverviewDto;
+import org.springframework.beans.factory.annotation.Value;
 import org.example.web.dto.portfolio.IncomeEventDto;
 import org.example.web.dto.portfolio.PortfolioHistoryDto;
 import org.example.web.dto.portfolio.PortfolioOverviewDto;
@@ -65,6 +73,13 @@ public class PortfolioService {
     private final AllocationCalculator allocationCalculator;
     private final PortfolioValueCalculator portfolioValueCalculator;
     private final XirrCalculator xirrCalculator;
+    private final CashMovementRepository cashMovementRepository;
+    private final CashBalanceCalculator cashBalanceCalculator;
+    private final DepositService depositService;
+    private final DepositCalculator depositCalculator;
+    private final DepositTaxCalculator depositTaxCalculator;
+    /** Максимальная ключевая ставка ЦБ за год: задаёт необлагаемый вычет по процентам вкладов. */
+    private final double keyRatePct;
 
     public PortfolioService(AccountService accountService,
                             TransactionRepository transactionRepository,
@@ -77,7 +92,19 @@ public class PortfolioService {
                             AllocationDimensionFactory allocationDimensionFactory,
                             AllocationCalculator allocationCalculator,
                             PortfolioValueCalculator portfolioValueCalculator,
-                            XirrCalculator xirrCalculator) {
+                            XirrCalculator xirrCalculator,
+                            CashMovementRepository cashMovementRepository,
+                            CashBalanceCalculator cashBalanceCalculator,
+                            DepositService depositService,
+                            DepositCalculator depositCalculator,
+                            DepositTaxCalculator depositTaxCalculator,
+                            @Value("${app.tax.key-rate-pct}") double keyRatePct) {
+        this.cashMovementRepository = cashMovementRepository;
+        this.cashBalanceCalculator = cashBalanceCalculator;
+        this.depositService = depositService;
+        this.depositCalculator = depositCalculator;
+        this.depositTaxCalculator = depositTaxCalculator;
+        this.keyRatePct = keyRatePct;
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
         this.instrumentRepository = instrumentRepository;
@@ -97,13 +124,23 @@ public class PortfolioService {
     }
 
     /**
-     * @param instruments бумаги всех сделок счёта (не только открытых позиций) — держим в снапшоте,
-     *                    чтобы расчёт полученных выплат не перечитывал их из БД второй раз.
+     * @param instruments   бумаги всех сделок счёта (не только открытых позиций) — держим в снапшоте,
+     *                      чтобы расчёт полученных выплат не перечитывал их из БД второй раз
+     * @param pricedTrades  сделки, приведённые к деньгам — нужны расчёту остатка наличных
+     * @param cashMovements пополнения и выводы; пустой список означает, что учёт денег по счёту
+     *                      не ведётся, и это меняет способ расчёта доходности (см. {@link #capitalFlows})
      */
     private record Snapshot(Account account, List<Transaction> transactions,
                             Map<String, Instrument> instruments,
+                            List<PricedTrade> pricedTrades,
+                            List<CashMovement> cashMovements,
                             List<PositionView> positions,
                             List<RealizedSale> realizedSales, double totalCommission) {
+
+        /** Пополнения минус выводы. */
+        private double externalCashNet() {
+            return cashMovements.stream().mapToDouble(CashMovement::signedAmount).sum();
+        }
     }
 
     // --- Публичные операции ---
@@ -170,9 +207,183 @@ public class PortfolioService {
         List<Holding> holdings = s.positions().stream()
                 .map(p -> new Holding(dimension.categoryOf(p.instrument()), p.marketValue()))
                 .toList();
+        return toSlices(holdings);
+    }
+
+    private List<AllocationSliceDto> toSlices(List<Holding> holdings) {
         return allocationCalculator.breakdown(holdings).stream()
                 .map(sl -> new AllocationSliceDto(sl.category(), sl.value(), sl.percent()))
                 .toList();
+    }
+
+    /**
+     * Сводка по всем счетам клиента: суммы, распределение капитала по счетам и по типам бумаг,
+     * единый календарь ближайших выплат и общий XIRR.
+     * <p>
+     * Налог суммируется по счетам, а не считается от общей прибыли: ставка и льготы —
+     * свойство счёта (у ИИС типа Б купоны вообще не облагаются), поэтому каждая стратегия
+     * должна отработать на своих сделках. XIRR, наоборот, считается по объединённым потокам
+     * всех счетов — это доходность капитала целиком, а не среднее из доходностей.
+     */
+    public ConsolidatedOverviewDto consolidated(String clientId) {
+        List<Account> accounts = accountService.list(clientId);
+        List<Deposit> deposits = depositService.entities(clientId);
+        if (accounts.isEmpty() && deposits.isEmpty()) {
+            return ConsolidatedOverviewDto.empty();
+        }
+
+        AllocationDimension byTypeDimension = allocationDimensionFactory.forKey("type");
+        List<AccountLineDto> lines = new ArrayList<>();
+        List<Holding> accountHoldings = new ArrayList<>();
+        List<Holding> typeHoldings = new ArrayList<>();
+        List<IncomeEventDto> upcoming = new ArrayList<>();
+        List<CashFlow> flows = new ArrayList<>();
+        Totals totals = new Totals();
+
+        for (Account account : accounts) {
+            Snapshot s = snapshot(account);
+            boolean couponTaxable = isCouponTaxable(account);
+
+            double accountInvested = s.positions().stream().mapToDouble(PositionView::openCost).sum();
+            double accountValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
+
+            List<IncomeEvent> forecast = rawIncomeEvents(s);
+            double[] annual = projectedAnnualIncome(forecast);
+            List<IncomeEvent> realizedIncome = realizedIncomeEvents(s.transactions(), s.instruments());
+
+            totals.invested += accountInvested;
+            totals.marketValue += accountValue;
+            totals.realizedPnl += s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
+            totals.commission += s.totalCommission();
+            totals.receivedIncome += realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
+            totals.projectedIncome += annual[0] + annual[1];
+            totals.tax += computeTax(account, s.realizedSales(), annual).totalTax();
+            totals.positions += s.positions().size();
+
+            double accountCash = cashBalance(s.cashMovements(), s.pricedTrades(), realizedIncome);
+            totals.cashBalance += accountCash;
+
+            lines.add(toAccountLine(account, s, accountInvested, accountValue, accountCash));
+            // В разрезе по счетам показываем весь капитал счёта, включая непристроенные деньги
+            double accountCapital = accountValue + Math.max(accountCash, 0);
+            if (accountCapital > 0) {
+                accountHoldings.add(new Holding(account.getName(), accountCapital));
+            }
+            for (PositionView p : s.positions()) {
+                typeHoldings.add(new Holding(byTypeDimension.categoryOf(p.instrument()), p.marketValue()));
+            }
+            forecast.forEach(e -> upcoming.add(toIncomeDto(e, account, couponTaxable)));
+            flows.addAll(capitalFlows(s.transactions(), s.instruments(), s.cashMovements()));
+        }
+
+        LocalDate today = LocalDate.now();
+        double depositsValue = 0;
+        for (Deposit deposit : deposits) {
+            double value = depositCalculator.valueOn(deposit, today);
+            depositsValue += value;
+            if (value > 0) {
+                accountHoldings.add(new Holding(deposit.getName(), value));
+            }
+            upcoming.addAll(upcomingInterest(deposit, today));
+            flows.addAll(depositFlows(deposit, today));
+        }
+
+        if (totals.cashBalance > 0) {
+            typeHoldings.add(new Holding("Свободные деньги", totals.cashBalance));
+        }
+        if (depositsValue > 0) {
+            typeHoldings.add(new Holding("Вклады", depositsValue));
+        }
+
+        double grandTotal = totals.totalValue() + depositsValue;
+        if (grandTotal > 0) {
+            flows.add(new CashFlow(today, grandTotal));
+        }
+        Double xirr = xirrCalculator.compute(flows);
+        upcoming.sort(Comparator.comparing(IncomeEventDto::date));
+
+        return new ConsolidatedOverviewDto(totals.toDto(), lines,
+                toSlices(accountHoldings), toSlices(typeHoldings), upcoming,
+                xirr == null ? null : xirr * 100.0,
+                depositService.list(clientId), depositsValue, grandTotal,
+                depositTax(deposits, today));
+    }
+
+    /**
+     * Ближайшие поступления процентов по вкладу — на тех же правах, что купоны и дивиденды.
+     * <p>
+     * {@code net} равен {@code gross}: налог с процентов считается не с каждой выплаты, а от
+     * годовой суммы по всем вкладам сразу (общий вычет), поэтому «на руки» по одной выплате
+     * честно посчитать нельзя — эта величина отдельной строкой в {@code depositTax}.
+     */
+    private List<IncomeEventDto> upcomingInterest(Deposit deposit, LocalDate today) {
+        return depositCalculator.payouts(deposit).stream()
+                .filter(a -> !a.date().isBefore(today))
+                .map(a -> new IncomeEventDto(a.date(), null, IncomeKind.INTEREST,
+                        a.amount(), a.amount(), false, deposit.getName()))
+                .toList();
+    }
+
+    /**
+     * Потоки вклада для общего XIRR: открытие — отток тела, полученные проценты — приток.
+     * <p>
+     * У капитализируемого вклада выплат нет вовсе: проценты не покидают вклад и уже сидят
+     * в его текущей стоимости, которая войдёт в завершающий поток. Учесть их ещё и потоком —
+     * значит посчитать один и тот же доход дважды.
+     */
+    private List<CashFlow> depositFlows(Deposit deposit, LocalDate today) {
+        List<CashFlow> flows = new ArrayList<>();
+        flows.add(new CashFlow(deposit.getOpenedOn(), -deposit.getPrincipal()));
+        if (!deposit.isCapitalized()) {
+            depositCalculator.payouts(deposit).stream()
+                    .filter(a -> !a.date().isAfter(today))
+                    .forEach(a -> flows.add(new CashFlow(a.date(), a.amount())));
+        }
+        return flows;
+    }
+
+    /** Налог с процентов вкладов за текущий календарный год — вычет общий на все вклады клиента. */
+    private DepositTaxBreakdown depositTax(List<Deposit> deposits, LocalDate today) {
+        if (deposits.isEmpty()) {
+            return DepositTaxBreakdown.zero();
+        }
+        LocalDate yearStart = today.withDayOfYear(1).minusDays(1);
+        LocalDate yearEnd = today.withDayOfYear(today.lengthOfYear());
+        double interest = deposits.stream()
+                .mapToDouble(d -> depositCalculator.interestReceivedBetween(d, yearStart, yearEnd))
+                .sum();
+        return depositTaxCalculator.compute(interest, keyRatePct);
+    }
+
+    /** Накопитель сумм по счетам — иначе метод свёлся бы к десятку скачущих локальных переменных. */
+    private static final class Totals {
+        private double invested;
+        private double marketValue;
+        private double cashBalance;
+        private double realizedPnl;
+        private double commission;
+        private double receivedIncome;
+        private double projectedIncome;
+        private double tax;
+        private int positions;
+
+        private double totalValue() {
+            return marketValue + cashBalance;
+        }
+
+        private PortfolioSummaryDto toDto() {
+            return new PortfolioSummaryDto(invested, marketValue, cashBalance, totalValue(),
+                    marketValue - invested, realizedPnl,
+                    commission, receivedIncome, projectedIncome, tax, positions);
+        }
+    }
+
+    private AccountLineDto toAccountLine(Account account, Snapshot s, double invested,
+                                         double marketValue, double cash) {
+        double pnl = marketValue - invested;
+        return new AccountLineDto(account.getId(), account.getName(), account.getType(),
+                account.getIisType(), invested, marketValue, cash, marketValue + cash, pnl,
+                invested > 0 ? pnl / invested * 100.0 : 0.0, s.positions().size());
     }
 
     /**
@@ -212,7 +423,16 @@ public class PortfolioService {
         }
 
         List<ValuePoint> series = portfolioValueCalculator.series(request.build());
-        Double xirr = computeXirr(txns, instruments, series, to);
+
+        // Ряд стоимости — только бумаги; свободные деньги входят в завершающий поток XIRR,
+        // иначе доходность считалась бы от внесённых сумм, но капитал в кэше был бы потерян
+        List<CashMovement> movements = cashMovementRepository
+                .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
+        double positionsValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
+        double terminal = positionsValue + (movements.isEmpty() ? 0.0
+                : cashBalance(movements, pricedTrades(txns, instruments),
+                        realizedIncomeEvents(txns, instruments)));
+        Double xirr = computeXirr(capitalFlows(txns, instruments, movements), terminal, to);
 
         return new PortfolioHistoryDto(
                 series.stream()
@@ -251,12 +471,60 @@ public class PortfolioService {
         }
     }
 
+    private Double computeXirr(List<CashFlow> baseFlows, double terminalValue, LocalDate to) {
+        List<CashFlow> flows = new ArrayList<>(baseFlows);
+        if (terminalValue > 0) {
+            flows.add(new CashFlow(to, terminalValue));
+        }
+        return xirrCalculator.compute(flows);
+    }
+
     /**
-     * Потоки для XIRR: покупки — со знаком минус (с комиссией), продажи — плюс (за вычетом комиссии),
-     * полученные купоны и дивиденды — плюс, и завершающим потоком текущая стоимость позиций.
+     * Потоки капитала для XIRR — то, что инвестор реально вложил и забрал.
+     * <p>
+     * Если по счёту ведётся учёт денег, это пополнения (со знаком минус — капитал ушёл в портфель)
+     * и выводы (плюс). Покупка бумаги на уже заведённые деньги капиталом не является: это
+     * перекладывание внутри портфеля, и включать её в потоки нельзя — иначе доходность
+     * растёт от одного лишь оборота.
+     * <p>
+     * Если движений денег нет — а так выглядит любой счёт, заведённый до появления их учёта, —
+     * остаётся прежнее поведение: потоки по сделкам. Иначе у таких счетов XIRR просто исчез бы
+     * (потоки одного знака корня не имеют).
      */
-    private Double computeXirr(List<Transaction> txns, Map<String, Instrument> instruments,
-                               List<ValuePoint> series, LocalDate to) {
+    private List<CashFlow> capitalFlows(List<Transaction> txns, Map<String, Instrument> instruments,
+                                        List<CashMovement> movements) {
+        if (movements.isEmpty()) {
+            return tradeAndIncomeFlows(txns, instruments);
+        }
+        return movements.stream()
+                .map(m -> new CashFlow(m.getMovedOn(), -m.signedAmount()))
+                .toList();
+    }
+
+    private double cashBalance(List<CashMovement> movements, List<PricedTrade> trades,
+                               List<IncomeEvent> receivedIncome) {
+        double externalNet = movements.stream().mapToDouble(CashMovement::signedAmount).sum();
+        double received = receivedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
+        return cashBalanceCalculator.balance(externalNet, trades, received);
+    }
+
+    private List<PricedTrade> pricedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
+        return txns.stream()
+                .map(t -> new PricedTrade(t.getSide(), t.getTradeDate(), t.getQuantity(),
+                        InstrumentPricing.tradeMoneyPerUnit(instruments.get(t.getSecId()),
+                                t.getPrice(), t.getAci()),
+                        t.getCommission()))
+                .toList();
+    }
+
+    /**
+     * Потоки счёта без завершающего: покупки — со знаком минус (с комиссией), продажи — плюс
+     * (за вычетом комиссии), полученные купоны и дивиденды — плюс. Завершающий поток
+     * (текущая стоимость) добавляет вызывающий: для одного счёта это конец ряда стоимости,
+     * для сводки по всем счетам — суммарная рыночная стоимость.
+     */
+    private List<CashFlow> tradeAndIncomeFlows(List<Transaction> txns,
+                                               Map<String, Instrument> instruments) {
         List<CashFlow> flows = new ArrayList<>();
         for (Transaction t : txns) {
             double money = t.getQuantity() * InstrumentPricing.tradeMoneyPerUnit(
@@ -266,12 +534,7 @@ public class PortfolioService {
                     : money - t.getCommission()));
         }
         realizedIncomeEvents(txns, instruments).forEach(e -> flows.add(new CashFlow(e.date(), e.gross())));
-
-        double terminalValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
-        if (terminalValue > 0) {
-            flows.add(new CashFlow(to, terminalValue));
-        }
-        return xirrCalculator.compute(flows);
+        return flows;
     }
 
     public PortfolioSummaryDto summary(String clientId, Long accountId) {
@@ -291,8 +554,10 @@ public class PortfolioService {
         double marketValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
         double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
         double receivedIncome = realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
+        double cash = cashBalance(s.cashMovements(), s.pricedTrades(), realizedIncome);
 
-        return new PortfolioSummaryDto(invested, marketValue, marketValue - invested, realized,
+        return new PortfolioSummaryDto(invested, marketValue, cash, marketValue + cash,
+                marketValue - invested, realized,
                 s.totalCommission(), receivedIncome, annual[0] + annual[1], estimatedTax,
                 s.positions().size());
     }
@@ -301,6 +566,8 @@ public class PortfolioService {
 
     private Snapshot snapshot(Account account) {
         List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
+        List<CashMovement> movements = cashMovementRepository
+                .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
         double totalCommission = txns.stream().mapToDouble(Transaction::getCommission).sum();
 
         Map<String, List<Transaction>> bySec = groupBySecId(txns);
@@ -328,7 +595,8 @@ public class PortfolioService {
                         marketValue, marketValue - openCost));
             }
         }
-        return new Snapshot(account, txns, instruments, positions, realized, totalCommission);
+        return new Snapshot(account, txns, instruments, pricedTrades(txns, instruments), movements,
+                positions, realized, totalCommission);
     }
 
     private Map<String, List<Transaction>> groupBySecId(List<Transaction> txns) {
@@ -469,10 +737,14 @@ public class PortfolioService {
     private IncomeEventDto toIncomeDto(IncomeEvent e, Account account, boolean couponTaxable) {
         double net = switch (e.kind()) {
             case AMORTIZATION -> e.gross();  // возврат тела долга, не доход
+            // Проценты вкладов сюда не попадают (у них свой путь), но ветка обязана существовать:
+            // налог по ним считается от годовой суммы всех вкладов, а не с отдельной выплаты
+            case INTEREST -> e.gross();
             case COUPON -> couponTaxable ? e.gross() * (1 - account.getBaseTaxRate() / 100.0) : e.gross();
             case DIVIDEND -> e.gross() * (1 - TaxRates.DIVIDEND_PCT / 100.0);
         };
-        return new IncomeEventDto(e.date(), e.secId(), e.kind(), e.gross(), net, e.estimate());
+        return new IncomeEventDto(e.date(), e.secId(), e.kind(), e.gross(), net, e.estimate(),
+                account.getName());
     }
 
     private boolean isCouponTaxable(Account account) {

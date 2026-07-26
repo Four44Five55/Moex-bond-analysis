@@ -15,6 +15,14 @@ public final class TaxRates {
 
     public static final double HIGH_PCT = 15.0;
 
+    public static final double BASE_PCT = 13.0;
+
+    /**
+     * База необлагаемого вычета по процентам вкладов: 1 млн ₽ × максимальная ключевая ставка
+     * за год. Сама ставка задаётся конфигурацией — источника в MOEX ISS для неё нет.
+     */
+    public static final double DEPOSIT_DEDUCTION_BASE = 1_000_000.0;
+
     private TaxRates() {
     }
 }

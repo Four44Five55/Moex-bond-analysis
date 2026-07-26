@@ -4,5 +4,7 @@ package org.example.domain.portfolio;
 public enum IncomeKind {
     COUPON,
     AMORTIZATION,
-    DIVIDEND
+    DIVIDEND,
+    /** Проценты по банковскому вкладу. */
+    INTEREST
 }

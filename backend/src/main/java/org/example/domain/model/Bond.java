@@ -39,8 +39,12 @@ public class Bond extends Instrument {
     @Column(name = "next_coupon_date")
     private LocalDate nextCouponDate;
 
-    /** Накопленный купонный доход (НКД) на одну облигацию, в валюте. */
-    @Column(name = "accrued_interest")
+    /**
+     * Накопленный купонный доход (НКД) на одну облигацию, в валюте.
+     * Поле примитивное, поэтому колонка обязана быть NOT NULL DEFAULT 0 (см. V4): на NULL
+     * Hibernate роняет чтение всей облигации, а не подставляет ноль.
+     */
+    @Column(name = "accrued_interest", nullable = false)
     private double accruedInterest;
 
     /** Ближайшая дата оферты (put/call/выкуп), если есть. */

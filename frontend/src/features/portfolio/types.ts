@@ -1,7 +1,8 @@
 export type AccountType = "BROKERAGE" | "IIS";
 export type IisType = "A" | "B";
 export type TradeSide = "BUY" | "SELL";
-export type IncomeKind = "COUPON" | "AMORTIZATION" | "DIVIDEND";
+export type IncomeKind = "COUPON" | "AMORTIZATION" | "DIVIDEND" | "INTEREST";
+export type PayoutPeriod = "MONTHLY" | "QUARTERLY" | "SEMIANNUAL" | "ANNUAL" | "AT_MATURITY";
 
 export interface Account {
   id: number;
@@ -57,9 +58,30 @@ export interface Position {
   unrealizedPct: number;
 }
 
+export type CashDirection = "IN" | "OUT";
+
+export interface CashMovement {
+  id: number;
+  direction: CashDirection;
+  movedOn: string;
+  amount: number;
+  note: string | null;
+}
+
+export interface CashMovementRequest {
+  direction: CashDirection;
+  movedOn: string;
+  amount: number;
+  note?: string | null;
+}
+
 export interface PortfolioSummary {
   invested: number;
   marketValue: number;
+  /** Свободные деньги; отрицательные — если сделки заведены, а пополнения нет. */
+  cashBalance: number;
+  /** Бумаги по рынку плюс свободные деньги. */
+  totalValue: number;
   unrealizedPnl: number;
   realizedPnl: number;
   totalCommission: number;
@@ -92,11 +114,81 @@ export interface AllocationSlice {
 
 export interface IncomeEvent {
   date: string;
-  secId: string;
+  /** null для процентов по вкладу — бумаги там нет. */
+  secId: string | null;
   kind: IncomeKind;
   gross: number;
   net: number;
   estimate: boolean;
+  /** Счёт, куда придёт выплата — нужен в сводном календаре по всем счетам. */
+  accountName: string;
+}
+
+export interface AccountLine {
+  id: number;
+  name: string;
+  type: AccountType;
+  iisType: IisType | null;
+  invested: number;
+  marketValue: number;
+  cashBalance: number;
+  totalValue: number;
+  unrealizedPnl: number;
+  unrealizedPct: number;
+  positionsCount: number;
+}
+
+export interface Deposit {
+  id: number;
+  name: string;
+  principal: number;
+  ratePct: number;
+  openedOn: string;
+  maturesOn: string;
+  capitalized: boolean;
+  payoutPeriod: PayoutPeriod;
+  note: string | null;
+  /** Тело плюс начисленные, но ещё не выплаченные проценты. */
+  currentValue: number;
+  accruedNotPaid: number;
+  totalInterest: number;
+  nextPayoutOn: string | null;
+  matured: boolean;
+}
+
+export interface DepositRequest {
+  name: string;
+  principal: number;
+  ratePct: number;
+  openedOn: string;
+  maturesOn: string;
+  capitalized: boolean;
+  payoutPeriod: PayoutPeriod;
+  note?: string | null;
+}
+
+/** Налог с процентов по вкладам: вычет один на все вклады клиента, а не на каждый. */
+export interface DepositTaxBreakdown {
+  interestIncome: number;
+  deduction: number;
+  taxableIncome: number;
+  tax: number;
+  notes: string;
+}
+
+/** Сводка по всем счетам и вкладам сразу — страница «Портфель». */
+export interface ConsolidatedOverview {
+  totals: PortfolioSummary;
+  accounts: AccountLine[];
+  byAccount: AllocationSlice[];
+  byType: AllocationSlice[];
+  upcomingIncome: IncomeEvent[];
+  xirrPct: number | null;
+  deposits: Deposit[];
+  depositsValue: number;
+  /** Бумаги + свободные деньги + вклады. */
+  grandTotal: number;
+  depositTax: DepositTaxBreakdown;
 }
 
 export interface TaxBreakdown {

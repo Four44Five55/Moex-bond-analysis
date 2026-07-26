@@ -3,11 +3,29 @@ import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
-import type { AccountRequest, AccountType, IisType } from "./types";
+import { DonutChart } from "../../shared/charts/DonutChart";
+import { DepositsPanel } from "./DepositsPanel";
+import { num, pct, date, changeColor } from "../../shared/lib/format";
+import type { AccountRequest, AccountType, ConsolidatedOverview, IisType, IncomeKind } from "./types";
+
+const incomeLabel: Record<IncomeKind, string> = {
+  COUPON: "Купон",
+  AMORTIZATION: "Амортизация",
+  DIVIDEND: "Дивиденд",
+  INTEREST: "Проценты",
+};
+
+/** Считать есть что, если где-то есть бумаги, деньги или вклад — одного пополнения уже достаточно. */
+const hasSomething = (o: ConsolidatedOverview) =>
+  o.totals.positionsCount > 0 || o.totals.cashBalance !== 0 || o.deposits.length > 0;
+
+const accountKind = (type: AccountType, iisType: IisType | null) =>
+  type === "IIS" ? `ИИС ${iisType ?? ""}`.trim() : "Брокерский";
 
 export function PortfoliosPage() {
   const qc = useQueryClient();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: portfolioApi.listAccounts });
+  const overview = useQuery({ queryKey: ["accounts", "consolidated"], queryFn: portfolioApi.consolidated });
 
   const [name, setName] = useState("");
   const [type, setType] = useState<AccountType>("BROKERAGE");
@@ -39,10 +57,124 @@ export function PortfoliosPage() {
   };
 
   const list = accounts.data ?? [];
+  const o = overview.data;
+  const t = o?.totals;
+  // Строки счетов из сводки несут суммы; список счетов — источник правды по составу и порядку
+  const lineById = new Map((o?.accounts ?? []).map((a) => [a.id, a]));
+
+  const cards = [
+    { label: "Всего капитала", value: num(o?.grandTotal) },
+    { label: "Бумаги по рынку", value: num(t?.marketValue) },
+    { label: "Вклады", value: num(o?.depositsValue) },
+    { label: "Свободные деньги", value: num(t?.cashBalance), color: changeColor(t?.cashBalance) },
+    {
+      label: "Нереализованный P&L",
+      value: num(t?.unrealizedPnl),
+      color: changeColor(t?.unrealizedPnl),
+    },
+    { label: "Доходность (XIRR)", value: pct(o?.xirrPct), color: changeColor(o?.xirrPct) },
+    { label: "Получено выплат", value: num(t?.receivedIncome) },
+    { label: "Прогноз дохода (12 мес)", value: num(t?.projectedAnnualIncome) },
+    { label: "Оценка налога", value: num(t?.estimatedTax) },
+  ];
 
   return (
     <div className="page">
       <h1>Портфель</h1>
+
+      {o && !hasSomething(o) && (
+        <div className="empty">
+          Пока считать нечего: заведите пополнение, сделку или вклад — сводка появится сразу.
+        </div>
+      )}
+
+      {o && t && hasSomething(o) && (
+        <>
+          <div className="cards">
+            {cards.map((c) => (
+              <div className="card" key={c.label}>
+                <div className="card-value" style={{ color: c.color }}>{c.value}</div>
+                <div className="card-label">{c.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="two-col">
+            <section className="panel">
+              <h2>Капитал по счетам</h2>
+              <DonutChart data={o.byAccount.map((a) => ({ label: a.category, value: a.value }))} />
+            </section>
+            <section className="panel">
+              <h2>Капитал по типам бумаг</h2>
+              <DonutChart data={o.byType.map((a) => ({ label: a.category, value: a.value }))} />
+            </section>
+          </div>
+
+          <section className="panel">
+            <h2>Ближайшие выплаты по всем счетам</h2>
+            {o.upcomingIncome.length === 0 && <div className="empty">Объявленных выплат нет.</div>}
+            {o.upcomingIncome.length > 0 && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Дата</th><th>Бумага</th><th>Счёт</th><th>Тип</th>
+                      <th className="num">Начислено</th><th className="num">На руки</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {o.upcomingIncome.slice(0, 15).map((e, i) => (
+                      <tr key={i}>
+                        <td>{date(e.date)}</td>
+                        <td>{e.secId ?? "—"}</td>
+                        <td>{e.accountName}</td>
+                        <td>{incomeLabel[e.kind]}</td>
+                        <td className="num">{num(e.gross)}</td>
+                        <td className="num">{num(e.net)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      <DepositsPanel deposits={o?.deposits ?? []} tax={o?.depositTax} />
+
+      <section className="panel">
+        <h2>Мои счета</h2>
+        {list.length === 0 && <div className="empty">Счетов пока нет — создайте первый ниже.</div>}
+        <div className="account-grid">
+          {list.map((a) => {
+            const line = lineById.get(a.id);
+            return (
+              <div className="account-card" key={a.id}>
+                <div className="account-head">
+                  <Link to={`/portfolio/${a.id}`} className="account-name">
+                    {a.name}
+                  </Link>
+                  <button className="x" onClick={() => remove.mutate(a.id)} title="Удалить">
+                    ✕
+                  </button>
+                </div>
+                <div className="account-value">{num(line?.totalValue)}</div>
+                <div className="account-pnl" style={{ color: changeColor(line?.unrealizedPnl) }}>
+                  {num(line?.unrealizedPnl)} · {pct(line?.unrealizedPct)}
+                </div>
+                <div className="account-meta">
+                  бумаги {num(line?.marketValue)} · деньги {num(line?.cashBalance)}
+                </div>
+                <div className="account-meta">
+                  {accountKind(a.type, a.iisType)} · позиций {line?.positionsCount ?? 0} · комиссия{" "}
+                  {a.defaultCommissionPct}% · НДФЛ {a.baseTaxRate}%
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="panel">
         <h2>Новый счёт</h2>
@@ -79,28 +211,6 @@ export function PortfoliosPage() {
             Создать
           </button>
         </form>
-      </section>
-
-      <section className="panel">
-        <h2>Мои счета</h2>
-        {list.length === 0 && <div className="empty">Счетов пока нет — создайте первый выше.</div>}
-        <div className="account-grid">
-          {list.map((a) => (
-            <div className="account-card" key={a.id}>
-              <div className="account-head">
-                <Link to={`/portfolio/${a.id}`} className="account-name">
-                  {a.name}
-                </Link>
-                <button className="x" onClick={() => remove.mutate(a.id)} title="Удалить">
-                  ✕
-                </button>
-              </div>
-              <div className="account-meta">
-                {a.type === "IIS" ? `ИИС ${a.iisType}` : "Брокерский"} · комиссия {a.defaultCommissionPct}% · НДФЛ {a.baseTaxRate}%
-              </div>
-            </div>
-          ))}
-        </div>
       </section>
     </div>
   );

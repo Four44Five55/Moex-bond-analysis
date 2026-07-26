@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { AddTransactionForm } from "./AddTransactionForm";
+import { CashPanel } from "./CashPanel";
 import { DonutChart } from "../../shared/charts/DonutChart";
 import { LineChart } from "../../shared/charts/LineChart";
 import { num, pct, date } from "../../shared/lib/format";
@@ -27,6 +28,7 @@ const incomeLabel: Record<IncomeKind, string> = {
   COUPON: "Купон",
   AMORTIZATION: "Амортизация",
   DIVIDEND: "Дивиденд",
+  INTEREST: "Проценты", // вклады к счёту не привязаны, но тип общий на весь календарь выплат
 };
 
 export function AccountPage() {
@@ -52,7 +54,10 @@ export function AccountPage() {
 
   const removeTxn = useMutation({
     mutationFn: (txId: number) => portfolioApi.deleteTransaction(id, txId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["account", id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["account", id] });
+      qc.invalidateQueries({ queryKey: ["accounts"] }); // сводка по всем счетам тоже устарела
+    },
   });
 
   const s = overview.data?.summary;
@@ -80,8 +85,10 @@ export function AccountPage() {
   );
 
   const cards = [
+    { label: "Всего на счёте", value: num(s?.totalValue) },
     { label: "Вложено", value: num(s?.invested) },
     { label: "Рыночная стоимость", value: num(s?.marketValue) },
+    { label: "Свободные деньги", value: num(s?.cashBalance), color: changeColor(s?.cashBalance ?? 0) },
     { label: "Нереализованный P&L", value: num(s?.unrealizedPnl), color: changeColor(s?.unrealizedPnl ?? 0) },
     { label: "Реализованный P&L", value: num(s?.realizedPnl), color: changeColor(s?.realizedPnl ?? 0) },
     { label: "Получено выплат", value: num(s?.receivedIncome) },
@@ -263,6 +270,8 @@ export function AccountPage() {
         )}
         <div className="hint">Учтены только выплаты, где на дату отсечки у тебя реально была позиция (× количество на тот момент).</div>
       </section>
+
+      <CashPanel accountId={id} balance={s?.cashBalance} />
 
       <section className="panel">
         <h2>Добавить сделку</h2>
