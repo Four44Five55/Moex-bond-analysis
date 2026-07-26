@@ -40,6 +40,11 @@ spring:
       write-dates-as-timestamps: false
 
 # Настройки приложения
+app:
+  cors:
+    # Vite dev/preview. Переопределяется переменной CORS_ORIGINS (через запятую) при выносе с localhost.
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5180,http://localhost:4180}
+
 moex:
   base-url: https://iss.moex.com/iss
   sync:

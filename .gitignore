@@ -14,6 +14,7 @@ output/
 node_modules/
 dist/
 *.local
+*.tsbuildinfo
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
