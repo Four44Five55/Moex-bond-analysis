@@ -55,3 +55,21 @@ java {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+/**
+ * Классы `*IT` поднимают Testcontainers и требуют запущенного Docker, поэтому в `test` их нет:
+ * иначе выключенный Docker роняет сборку при полностью исправном коде. `check` их тоже не тянет —
+ * интеграционные тесты запускаются осознанно, когда инфраструктура поднята.
+ */
+tasks.test {
+    exclude("**/*IT.class")
+}
+
+tasks.register<Test>("integrationTest") {
+    group = "verification"
+    description = "Интеграционные тесты на Testcontainers — нужен запущенный Docker."
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    include("**/*IT.class")
+    shouldRunAfter(tasks.test)
+}
