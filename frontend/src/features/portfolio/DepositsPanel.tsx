@@ -153,6 +153,7 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
           {tax && (
             <div className="tax-list">
               <div><span>Проценты за год</span><b>{num(tax.interestIncome)}</b></div>
+              <div><span>Ключевая ставка ЦБ (макс. за год)</span><b>{pct(tax.keyRatePct)}</b></div>
               <div><span>Необлагаемый вычет</span><b>{num(tax.deduction)}</b></div>
               <div className="tax-total"><span>НДФЛ с процентов</span><b>{num(tax.tax)}</b></div>
               <div className="hint">{tax.notes}</div>
@@ -160,8 +161,10 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
           )}
           <div className="hint">
             Вычет по вкладам даётся один на все вклады сразу, поэтому налог считается от годовой
-            суммы процентов целиком, а не по каждому вкладу отдельно. Ключевая ставка, от которой
-            зависит вычет, задаётся в конфигурации бэкенда (<code>app.tax.key-rate-pct</code>).
+            суммы процентов целиком, а не по каждому вкладу отдельно. Ставка берётся из веб-сервиса
+            ЦБ — это максимум на 1-е число каждого месяца года, поэтому меняться она может не чаще
+            раза в месяц. Данные обновляются не реже раза в 12 часов; если ЦБ недоступен, берётся
+            запасное значение из конфигурации бэкенда.
           </div>
         </>
       )}

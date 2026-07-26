@@ -173,6 +173,8 @@ export interface DepositTaxBreakdown {
   deduction: number;
   taxableIncome: number;
   tax: number;
+  /** Максимальная ключевая ставка ЦБ за год — из неё посчитан вычет. */
+  keyRatePct: number;
   notes: string;
 }
 

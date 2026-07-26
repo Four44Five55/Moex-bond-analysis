@@ -39,8 +39,9 @@ class RedisConfigTest {
     @Test
     void restoresPaymentsList() {
         List<InstrumentPaymentDto> payments = List.of(
-                new InstrumentPaymentDto(LocalDate.of(2025, 7, 15), "COUPON", 34.9, "RUB"),
-                new InstrumentPaymentDto(LocalDate.of(2025, 1, 15), "AMORTIZATION", 1000.0, "RUB"));
+                new InstrumentPaymentDto(LocalDate.of(2025, 7, 15), "COUPON", 34.9, "RUB", 3.56),
+                // null-доля тоже должна пережить сериализацию: цены у бумаги может не быть
+                new InstrumentPaymentDto(LocalDate.of(2025, 1, 15), "AMORTIZATION", 1000.0, "RUB", null));
 
         assertThat(roundTrip(payments)).isEqualTo(payments);
     }

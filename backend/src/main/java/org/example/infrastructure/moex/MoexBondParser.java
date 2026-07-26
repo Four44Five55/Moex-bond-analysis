@@ -42,11 +42,25 @@ public class MoexBondParser {
         for (MoexTable.Row row : securities) {
             Bond bond = toBond(row, durationBySecId);
             if (bond != null) {
-                bySecId.putIfAbsent(bond.getSecId(), bond);
+                bySecId.merge(bond.getSecId(), bond, MoexBondParser::preferPriced);
             }
         }
         logger.debug("Разобрано {} уникальных облигаций", bySecId.size());
         return List.copyOf(bySecId.values());
+    }
+
+    /**
+     * Из двух режимов торгов по одной бумаге оставляем тот, где есть цена.
+     * <p>
+     * Раньше здесь стоял {@code putIfAbsent}, то есть побеждал режим, который MOEX отдал первым.
+     * Для части ОФЗ первым идёт SPOB, где все ценовые поля пустые, — бумага сохранялась с ценой 0.
+     * В портфеле такая позиция оценивалась в ноль и выглядела как стопроцентный убыток,
+     * а в аллокации не получала доли вовсе.
+     */
+    private static Bond preferPriced(Bond existing, Bond candidate) {
+        boolean existingPriced = existing.getLastPrice() != null && existing.getLastPrice() > 0;
+        boolean candidatePriced = candidate.getLastPrice() != null && candidate.getLastPrice() > 0;
+        return !existingPriced && candidatePriced ? candidate : existing;
     }
 
     private Bond toBond(MoexTable.Row row, Map<String, Double> durationBySecId) {
@@ -61,7 +75,10 @@ public class MoexBondParser {
             bond.setMarket("bonds");
 
             bond.setFaceValue(row.getDouble("FACEVALUE"));
-            bond.setLastPrice(row.getDouble("PREVWAPRICE"));         // цена в % от номинала
+            // Цена в % от номинала. PREVWAPRICE — средневзвешенная прошлой сессии, и у бумаг
+            // без сделок она пуста; тогда берём цену закрытия. Иначе сотни неликвидных
+            // облигаций остались бы с нулевой ценой и нулевой оценкой в портфеле.
+            bond.setLastPrice(firstPositive(row, "PREVWAPRICE", "PREVLEGALCLOSEPRICE", "PREVPRICE"));
             bond.setPrevPrice(row.getDouble("PREVLEGALCLOSEPRICE"));
             bond.setCouponRate(row.getDouble("COUPONPERCENT"));
             bond.setYieldToMaturity(row.getDouble("YIELDATPREVWAPRICE"));
@@ -94,6 +111,17 @@ public class MoexBondParser {
             logger.debug("Пропущена облигация из-за ошибки разбора: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** Первое положительное значение из перечисленных столбцов; 0, если цены нет нигде. */
+    private double firstPositive(MoexTable.Row row, String... columns) {
+        for (String column : columns) {
+            double value = row.getDouble(column);
+            if (value > 0) {
+                return value;
+            }
+        }
+        return 0.0;
     }
 
     /** Первая непустая дата из перечисленных столбцов (у разных выпусков оферта в разных полях). */

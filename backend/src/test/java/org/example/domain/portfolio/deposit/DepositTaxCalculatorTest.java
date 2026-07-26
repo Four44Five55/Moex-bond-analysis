@@ -2,6 +2,8 @@ package org.example.domain.portfolio.deposit;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
@@ -50,5 +52,25 @@ class DepositTaxCalculatorTest {
     void notesExplainWhichDeductionWasApplied() {
         assertThat(calculator.compute(300_000, KEY_RATE).notes()).contains("превышение");
         assertThat(calculator.compute(10_000, KEY_RATE).notes()).contains("укладываются");
+    }
+
+    @Test
+    void keyRateIsReportedBackSoTheDeductionCanBeExplained() {
+        // Ставка приходит из ЦБ и меняется — без неё сумма вычета выглядит как магическое число
+        assertThat(calculator.compute(300_000, KEY_RATE).keyRatePct()).isEqualTo(KEY_RATE);
+        assertThat(calculator.compute(10_000, KEY_RATE).notes()).contains("20,00%");
+    }
+
+    @Test
+    void notesFormattingDoesNotDependOnJvmLocale() {
+        // Пояснение русское, значит и число в нём — с запятой, независимо от локали машины.
+        // Без явной локали тот же расчёт давал бы «20.00%» на сервере с английскими настройками.
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.US);
+            assertThat(calculator.compute(10_000, KEY_RATE).notes()).contains("20,00%");
+        } finally {
+            Locale.setDefault(original);
+        }
     }
 }

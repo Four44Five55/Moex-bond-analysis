@@ -220,6 +220,7 @@ export function InstrumentDetailPage() {
                 <tr>
                   <th>Дата</th><th>Тип</th>
                   <th className="num">На {i.type === "BOND" ? "облигацию" : "акцию"}</th>
+                  <th className="num">% от цены на дату</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,10 +229,18 @@ export function InstrumentDetailPage() {
                     <td>{date(p.date)}</td>
                     <td>{paymentLabel[p.kind]}</td>
                     <td className="num">{num(p.perUnit)}</td>
+                    <td className="num">{pct(p.sharePct)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
+            <div className="hint">
+              Доля выплаты в цене бумаги <b>на дату этой же выплаты</b> — то, чем выплата была
+              тогда, а не в пересчёте на сегодняшнюю цену. У ещё не наступивших выплат и там,
+              где котировки за тот день нет, берётся текущая цена.
+              {i.type === "BOND" && " Цена считается как номинал × котировку: котировка облигации выражена в процентах номинала."}
+              {" "}У амортизации это возврат тела долга, а не доход.
             </div>
           </>
         )}

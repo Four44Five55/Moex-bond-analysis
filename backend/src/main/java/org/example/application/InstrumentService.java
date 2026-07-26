@@ -1,5 +1,6 @@
 package org.example.application;
 
+import org.example.application.portfolio.InstrumentPricing;
 import org.example.domain.analysis.BondAnalyzer;
 import org.example.domain.analysis.DividendSummary;
 import org.example.domain.analysis.DividendYieldCalculator;
@@ -39,9 +40,13 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * Фасад чтения инструментов: диспетчеризация по типу (Strategy), фильтрация через
@@ -52,6 +57,8 @@ import java.util.Map;
 public class InstrumentService {
 
     private static final Logger log = LoggerFactory.getLogger(InstrumentService.class);
+    /** Код дневного интервала свечей MOEX. */
+    private static final int DAILY_INTERVAL = 24;
 
     private final BondRepository bondRepository;
     private final ShareRepository shareRepository;
@@ -82,25 +89,80 @@ public class InstrumentService {
 
     /** История выплат инструмента из MOEX: купоны/амортизации (облигация) или дивиденды (акция), новые сверху. */
     @Cacheable(cacheNames = "payments", key = "#secId")
+    @Transactional
     public List<InstrumentPaymentDto> payments(String secId) {
         Instrument inst = instrumentRepository.findBySecId(secId)
                 .orElseThrow(() -> new NotFoundException("Инструмент не найден: " + secId));
-        List<InstrumentPaymentDto> out = new ArrayList<>();
+
+        List<Payout> payouts = new ArrayList<>();
         try {
             if (inst instanceof Bond) {
                 corporateActions.coupons(secId).forEach(c ->
-                        out.add(new InstrumentPaymentDto(c.date(), "COUPON", c.perBond(), "RUB")));
+                        payouts.add(new Payout(c.date(), "COUPON", c.perBond(), "RUB")));
                 corporateActions.amortizations(secId).forEach(a ->
-                        out.add(new InstrumentPaymentDto(a.date(), "AMORTIZATION", a.perBond(), "RUB")));
+                        payouts.add(new Payout(a.date(), "AMORTIZATION", a.perBond(), "RUB")));
             } else if (inst instanceof Share) {
                 corporateActions.dividends(secId).forEach(d ->
-                        out.add(new InstrumentPaymentDto(d.recordDate(), "DIVIDEND", d.perShare(), d.currency())));
+                        payouts.add(new Payout(d.recordDate(), "DIVIDEND", d.perShare(), d.currency())));
             }
         } catch (RuntimeException e) {
             log.warn("История выплат по {} недоступна: {}", secId, e.getMessage());
         }
-        out.sort(Comparator.comparing(InstrumentPaymentDto::date).reversed());
-        return out;
+
+        NavigableMap<LocalDate, Double> historicalPrices = historicalPrices(secId, inst, payouts);
+        double currentPrice = InstrumentPricing.currentMoneyPerUnit(inst);
+
+        return payouts.stream()
+                .map(p -> new InstrumentPaymentDto(p.date(), p.kind(), p.perUnit(), p.currency(),
+                        sharePct(p, historicalPrices, currentPrice)))
+                .sorted(Comparator.comparing(InstrumentPaymentDto::date).reversed())
+                .toList();
+    }
+
+    private record Payout(LocalDate date, String kind, double perUnit, String currency) {
+    }
+
+    /**
+     * Доля выплаты в цене бумаги на <b>её собственную дату</b>: дивиденд, выплаченный когда акция
+     * стоила 100 ₽, был доходностью 10%, и пересчёт по сегодняшней цене превратил бы его в 4%,
+     * то есть в число, которого никогда не существовало.
+     * <p>
+     * Будущие выплаты считаются от текущей цены — другой у них быть не может. К ней же откатываемся,
+     * если свечи на дату отсечки нет (бумага тогда не торговалась или история не доехала).
+     */
+    private Double sharePct(Payout payout, NavigableMap<LocalDate, Double> prices, double currentPrice) {
+        Map.Entry<LocalDate, Double> onDate = prices.floorEntry(payout.date());
+        double price = onDate != null ? onDate.getValue() : currentPrice;
+        return price > 0 ? payout.perUnit() / price * 100.0 : null;
+    }
+
+    /**
+     * Дневные цены закрытия за период выплат, приведённые к деньгам за бумагу: котировка облигации
+     * приходит в процентах от номинала, и делить рублёвый купон на «98.4» дало бы доходность,
+     * завышенную в десятки раз.
+     */
+    private NavigableMap<LocalDate, Double> historicalPrices(String secId, Instrument inst,
+                                                             List<Payout> payouts) {
+        LocalDate today = LocalDate.now();
+        Optional<LocalDate> earliest = payouts.stream()
+                .map(Payout::date)
+                .filter(d -> !d.isAfter(today))
+                .min(Comparator.naturalOrder());
+        if (earliest.isEmpty()) {
+            return Collections.emptyNavigableMap();
+        }
+        try {
+            TreeMap<LocalDate, Double> prices = new TreeMap<>();
+            for (var candle : candleService.getCandles(secId, DAILY_INTERVAL, earliest.get(), today)) {
+                prices.put(Instant.ofEpochSecond(candle.time()).atZone(ZoneOffset.UTC).toLocalDate(),
+                        InstrumentPricing.moneyPerUnit(inst, candle.close()));
+            }
+            return prices;
+        } catch (RuntimeException e) {
+            log.warn("Котировки для долей выплат по {} недоступны, берём текущую цену: {}",
+                    secId, e.getMessage());
+            return Collections.emptyNavigableMap();
+        }
     }
 
     /**
@@ -135,7 +197,7 @@ public class InstrumentService {
     public PerformanceDto performance(String secId) {
         LocalDate to = LocalDate.now();
         LocalDate from = to.minusYears(1).minusMonths(1);
-        List<PricePoint> points = candleService.getCandles(secId, 24, from, to).stream()
+        List<PricePoint> points = candleService.getCandles(secId, DAILY_INTERVAL, from, to).stream()
                 .map(c -> new PricePoint(
                         Instant.ofEpochSecond(c.time()).atZone(ZoneOffset.UTC).toLocalDate(),
                         c.high(), c.low(), c.close()))

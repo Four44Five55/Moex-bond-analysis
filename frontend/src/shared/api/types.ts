@@ -72,6 +72,8 @@ export interface InstrumentPayment {
   kind: "COUPON" | "AMORTIZATION" | "DIVIDEND";
   perUnit: number;
   currency: string;
+  /** Доля выплаты от текущей цены бумаги, %. null — если цены нет. */
+  sharePct: number | null;
 }
 
 export interface DividendInfo {
