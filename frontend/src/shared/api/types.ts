@@ -31,6 +31,9 @@ export interface Instrument {
   callable: boolean | null;
   puttable: boolean | null;
   suspiciousYield: boolean | null;
+  accruedInterest: number | null;
+  currentYield: number | null;
+  offerDate: string | null;
   // акции
   lotSize: number | null;
   capitalization: number | null;
@@ -62,6 +65,30 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+}
+
+export interface InstrumentPayment {
+  date: string;
+  kind: "COUPON" | "AMORTIZATION" | "DIVIDEND";
+  perUnit: number;
+  currency: string;
+}
+
+export interface DividendInfo {
+  trailingSum: number | null;
+  dividendYield: number | null;
+  count: number;
+}
+
+export interface InstrumentPerformance {
+  lastPrice: number;
+  change1d: number | null;
+  change1w: number | null;
+  change1m: number | null;
+  change1y: number | null;
+  changeYtd: number | null;
+  high52w: number | null;
+  low52w: number | null;
 }
 
 export interface InstrumentFilters {

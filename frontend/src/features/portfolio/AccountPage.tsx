@@ -1,9 +1,25 @@
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { AddTransactionForm } from "./AddTransactionForm";
+import { DonutChart } from "../../shared/charts/DonutChart";
+import { LineChart } from "../../shared/charts/LineChart";
 import { num, pct, date } from "../../shared/lib/format";
-import type { IncomeKind } from "./types";
+import type { AllocationDimension, IncomeKind } from "./types";
+
+const ALLOCATION_DIMS: Array<{ key: AllocationDimension; label: string }> = [
+  { key: "type", label: "Тип" },
+  { key: "sector", label: "Сектор" },
+  { key: "currency", label: "Валюта" },
+];
+
+const HISTORY_PERIODS = [
+  { months: 3, label: "3М" },
+  { months: 6, label: "6М" },
+  { months: 12, label: "1Г" },
+  { months: 60, label: "5Л" },
+];
 
 const changeColor = (v: number) => (v > 0 ? "#3fb950" : v < 0 ? "#f85149" : "inherit");
 
@@ -18,10 +34,22 @@ export function AccountPage() {
   const id = Number(accountId);
   const qc = useQueryClient();
 
+  const [allocBy, setAllocBy] = useState<AllocationDimension>("type");
+  const [historyMonths, setHistoryMonths] = useState(12);
+
   const account = useQuery({ queryKey: ["account", id, "meta"], queryFn: () => portfolioApi.getAccount(id) });
   const summary = useQuery({ queryKey: ["account", id, "summary"], queryFn: () => portfolioApi.summary(id) });
   const positions = useQuery({ queryKey: ["account", id, "positions"], queryFn: () => portfolioApi.positions(id) });
+  const allocation = useQuery({
+    queryKey: ["account", id, "allocation", allocBy],
+    queryFn: () => portfolioApi.allocation(id, allocBy),
+  });
+  const history = useQuery({
+    queryKey: ["account", id, "history", historyMonths],
+    queryFn: () => portfolioApi.valueSeries(id, historyMonths),
+  });
   const income = useQuery({ queryKey: ["account", id, "income"], queryFn: () => portfolioApi.income(id) });
+  const received = useQuery({ queryKey: ["account", id, "received"], queryFn: () => portfolioApi.received(id) });
   const tax = useQuery({ queryKey: ["account", id, "tax"], queryFn: () => portfolioApi.tax(id) });
   const txns = useQuery({ queryKey: ["account", id, "txns"], queryFn: () => portfolioApi.listTransactions(id) });
 
@@ -33,11 +61,30 @@ export function AccountPage() {
   const s = summary.data;
   const t = tax.data;
 
+  // Пересоздание массива на каждый рендер заставило бы график пересобираться заново
+  const historySeries = useMemo(
+    () => [
+      {
+        label: "Стоимость",
+        color: "#3987e5",
+        data: (history.data?.points ?? []).map((p) => ({ date: p.date, value: p.value })),
+      },
+      {
+        label: "Вложено",
+        color: "#8b94a7",
+        dashed: true,
+        data: (history.data?.points ?? []).map((p) => ({ date: p.date, value: p.invested })),
+      },
+    ],
+    [history.data]
+  );
+
   const cards = [
     { label: "Вложено", value: num(s?.invested) },
     { label: "Рыночная стоимость", value: num(s?.marketValue) },
     { label: "Нереализованный P&L", value: num(s?.unrealizedPnl), color: changeColor(s?.unrealizedPnl ?? 0) },
     { label: "Реализованный P&L", value: num(s?.realizedPnl), color: changeColor(s?.realizedPnl ?? 0) },
+    { label: "Получено выплат", value: num(s?.receivedIncome) },
     { label: "Прогноз дохода (12 мес)", value: num(s?.projectedAnnualIncome) },
     { label: "Оценка налога", value: num(s?.estimatedTax) },
   ];
@@ -57,6 +104,38 @@ export function AccountPage() {
           </div>
         ))}
       </div>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Стоимость портфеля</h2>
+          <div className="seg">
+            {HISTORY_PERIODS.map((p) => (
+              <button
+                key={p.months}
+                className={historyMonths === p.months ? "on" : ""}
+                onClick={() => setHistoryMonths(p.months)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {history.data && history.data.points.length === 0 && (
+          <div className="empty">График появится после первой сделки.</div>
+        )}
+        {history.data && history.data.points.length > 0 && (
+          <>
+            <div className="xirr">
+              <span>Годовая доходность (XIRR)</span>
+              <b style={{ color: changeColor(history.data.xirrPct ?? 0) }}>{pct(history.data.xirrPct)}</b>
+            </div>
+            <LineChart series={historySeries} />
+            <div className="hint">
+              XIRR учитывает все сделки за историю счёта, полученные выплаты и текущую стоимость позиций.
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="panel">
         <h2>Позиции</h2>
@@ -91,6 +170,29 @@ export function AccountPage() {
         )}
       </section>
 
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Аллокация</h2>
+          <div className="seg">
+            {ALLOCATION_DIMS.map((d) => (
+              <button
+                key={d.key}
+                className={allocBy === d.key ? "on" : ""}
+                onClick={() => setAllocBy(d.key)}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {allocation.data && allocation.data.length === 0 && (
+          <div className="empty">Нет открытых позиций для разбивки.</div>
+        )}
+        {allocation.data && allocation.data.length > 0 && (
+          <DonutChart data={allocation.data.map((a) => ({ label: a.category, value: a.value }))} />
+        )}
+      </section>
+
       <div className="two-col">
         <section className="panel">
           <h2>Доходный календарь</h2>
@@ -106,7 +208,7 @@ export function AccountPage() {
                     <tr key={i}>
                       <td>{date(e.date)}</td>
                       <td>{e.secId}</td>
-                      <td>{incomeLabel[e.kind]}{e.estimate ? " *" : ""}</td>
+                      <td>{incomeLabel[e.kind]}</td>
                       <td className="num">{num(e.gross)}</td>
                       <td className="num">{num(e.net)}</td>
                     </tr>
@@ -115,7 +217,7 @@ export function AccountPage() {
               </table>
             </div>
           )}
-          <div className="hint">* — оценка (точного прогноза дивидендов у MOEX нет)</div>
+          <div className="hint">Показаны только объявленные MOEX выплаты (купоны, амортизации, дивиденды с назначенной датой отсечки).</div>
         </section>
 
         <section className="panel">
@@ -133,6 +235,34 @@ export function AccountPage() {
           )}
         </section>
       </div>
+
+      <section className="panel">
+        <h2>Полученные выплаты</h2>
+        {received.data && received.data.length === 0 && (
+          <div className="empty">Пока не было выплат: на даты отсечек по этому счёту позиций не было.</div>
+        )}
+        {received.data && received.data.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Дата</th><th>Бумага</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
+              </thead>
+              <tbody>
+                {received.data.slice(0, 50).map((e, i) => (
+                  <tr key={i}>
+                    <td>{date(e.date)}</td>
+                    <td>{e.secId}</td>
+                    <td>{incomeLabel[e.kind]}</td>
+                    <td className="num">{num(e.gross)}</td>
+                    <td className="num">{num(e.net)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="hint">Учтены только выплаты, где на дату отсечки у тебя реально была позиция (× количество на тот момент).</div>
+      </section>
 
       <section className="panel">
         <h2>Добавить сделку</h2>

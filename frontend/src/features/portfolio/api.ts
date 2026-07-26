@@ -3,7 +3,10 @@ import type {
   Account,
   AccountRequest,
   AddTransactionRequest,
+  AllocationDimension,
+  AllocationSlice,
   IncomeEvent,
+  PortfolioHistory,
   PortfolioSummary,
   Position,
   TaxBreakdown,
@@ -26,6 +29,11 @@ export const portfolioApi = {
 
   positions: (id: number) => apiGetWithClient<Position[]>(`${A}/${id}/positions`),
   summary: (id: number) => apiGetWithClient<PortfolioSummary>(`${A}/${id}/summary`),
+  allocation: (id: number, by: AllocationDimension) =>
+    apiGetWithClient<AllocationSlice[]>(`${A}/${id}/allocation?by=${by}`),
+  valueSeries: (id: number, months: number) =>
+    apiGetWithClient<PortfolioHistory>(`${A}/${id}/value-series?months=${months}`),
   income: (id: number) => apiGetWithClient<IncomeEvent[]>(`${A}/${id}/income`),
+  received: (id: number) => apiGetWithClient<IncomeEvent[]>(`${A}/${id}/received`),
   tax: (id: number) => apiGetWithClient<TaxBreakdown>(`${A}/${id}/tax`),
 };

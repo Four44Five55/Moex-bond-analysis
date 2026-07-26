@@ -6,6 +6,7 @@ public record PortfolioSummaryDto(
         double unrealizedPnl,
         double realizedPnl,
         double totalCommission,
+        double receivedIncome,
         double projectedAnnualIncome,
         double estimatedTax,
         int positionsCount

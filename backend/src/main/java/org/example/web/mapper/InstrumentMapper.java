@@ -38,6 +38,7 @@ public final class InstrumentMapper {
                 // облигационные — не применимо
                 null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null,
+                null, null, null,
                 // акционные
                 s.getLotSize(),
                 s.getCapitalization(),
@@ -78,6 +79,9 @@ public final class InstrumentMapper {
                 b.isCallable(),
                 b.isPuttable(),
                 b.isSuspiciousYield(),
+                b.getAccruedInterest(),
+                b.getCurrentYield(),
+                b.getOfferDate(),
                 // акционные — не применимо
                 null, null, null,
                 b.getListLevel()

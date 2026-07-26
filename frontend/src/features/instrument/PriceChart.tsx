@@ -13,6 +13,7 @@ export function PriceChart({ candles }: { candles: Candle[] }) {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#90a0bd",
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: "rgba(43,56,79,0.4)" },

@@ -1,8 +1,11 @@
 import { API_BASE, apiGet, apiGetWithClient, apiPost, apiDelete } from "./client";
 import type {
   Candle,
+  DividendInfo,
   Instrument,
   InstrumentFilters,
+  InstrumentPayment,
+  InstrumentPerformance,
   PagedResponse,
 } from "./types";
 
@@ -31,8 +34,25 @@ export const instrumentsApi = {
 
   detail: (secId: string) => apiGet<Instrument>(`/instruments/${encodeURIComponent(secId)}`),
 
-  candles: (secId: string, interval = 24) =>
-    apiGet<Candle[]>(`/instruments/${encodeURIComponent(secId)}/candles?interval=${interval}`),
+  candles: (
+    secId: string,
+    opts: { interval?: number; from?: string; to?: string } = {}
+  ) => {
+    const p = new URLSearchParams();
+    p.set("interval", String(opts.interval ?? 24));
+    if (opts.from) p.set("from", opts.from);
+    if (opts.to) p.set("to", opts.to);
+    return apiGet<Candle[]>(`/instruments/${encodeURIComponent(secId)}/candles?${p.toString()}`);
+  },
+
+  payments: (secId: string) =>
+    apiGet<InstrumentPayment[]>(`/instruments/${encodeURIComponent(secId)}/payments`),
+
+  performance: (secId: string) =>
+    apiGet<InstrumentPerformance>(`/instruments/${encodeURIComponent(secId)}/performance`),
+
+  dividendYield: (secId: string) =>
+    apiGet<DividendInfo>(`/instruments/${encodeURIComponent(secId)}/dividend-yield`),
 
   compare: (secIds: string[]) =>
     apiGet<Instrument[]>(`/instruments/compare?secIds=${secIds.map(encodeURIComponent).join(",")}`),

@@ -6,10 +6,6 @@ package org.example.domain.portfolio.tax;
  */
 public abstract class AbstractTaxStrategy implements TaxStrategy {
 
-    protected static final double DIVIDEND_RATE = 13.0;
-    protected static final double PROGRESSIVE_THRESHOLD = 5_000_000.0;
-    protected static final double HIGH_RATE = 15.0;
-
     protected abstract boolean gainTaxable();
 
     protected abstract boolean couponTaxable();
@@ -28,7 +24,7 @@ public abstract class AbstractTaxStrategy implements TaxStrategy {
         double gainTax = progressiveTax(taxableGain, rate);
 
         double couponTax = couponTaxable() ? ctx.couponIncome() * rate / 100.0 : 0.0;
-        double dividendTax = ctx.dividendIncome() * DIVIDEND_RATE / 100.0;
+        double dividendTax = ctx.dividendIncome() * TaxRates.DIVIDEND_PCT / 100.0;
 
         double total = gainTax + couponTax + dividendTax;
 
@@ -43,10 +39,10 @@ public abstract class AbstractTaxStrategy implements TaxStrategy {
         if (base <= 0) {
             return 0.0;
         }
-        if (base <= PROGRESSIVE_THRESHOLD) {
+        if (base <= TaxRates.PROGRESSIVE_THRESHOLD) {
             return base * baseRate / 100.0;
         }
-        return PROGRESSIVE_THRESHOLD * baseRate / 100.0
-                + (base - PROGRESSIVE_THRESHOLD) * HIGH_RATE / 100.0;
+        return TaxRates.PROGRESSIVE_THRESHOLD * baseRate / 100.0
+                + (base - TaxRates.PROGRESSIVE_THRESHOLD) * TaxRates.HIGH_PCT / 100.0;
     }
 }

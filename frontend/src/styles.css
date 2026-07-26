@@ -90,6 +90,11 @@ a { color: inherit; text-decoration: none; }
 .search-name { flex: 1; }
 .search-sec { color: var(--muted); font-size: 12px; }
 
+/* Поле выбора инструмента внутри форм (переиспользует .search-results) */
+.picker { position: relative; }
+.picker > input { width: 200px; }
+.picker .search-results { top: 40px; right: auto; min-width: 280px; z-index: 5; }
+
 /* Buttons */
 .btn-primary, .btn-secondary {
   cursor: pointer;
@@ -217,12 +222,108 @@ tbody tr:hover { background: var(--panel-2); }
 .detail-price { text-align: right; }
 .detail-price .price { font-size: 30px; font-weight: 700; }
 
+/* Переключатели диапазона/интервала графика */
+.chart-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.seg-group { display: inline-flex; align-items: center; gap: 7px; }
+.seg-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button {
+  cursor: pointer;
+  background: var(--panel-2);
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  padding: 5px 11px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.seg button:last-child { border-right: none; }
+.seg button:hover:not(.on) { color: var(--text); }
+.seg button.on { background: var(--accent); color: #fff; }
+
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
 .metric { background: var(--panel-2); border-radius: 10px; padding: 12px 14px; }
 .metric-label { color: var(--muted); font-size: 12px; }
 .metric-value { font-size: 16px; font-weight: 600; margin-top: 4px; }
 
 .chart { width: 100%; height: 380px; }
+
+/* Returns strip */
+.returns-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.return-tile {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.return-tile.range { grid-column: span 2; }
+.return-label { color: var(--muted); font-size: 12px; }
+.return-value { font-size: 15px; font-weight: 600; margin-top: 4px; }
+
+/* Donut allocation */
+.donut { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+.donut svg { width: 220px; height: 220px; flex: none; }
+.donut-center { fill: var(--text); font-size: 11px; font-weight: 700; }
+.donut-legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 220px; }
+.donut-legend li {
+  display: grid;
+  grid-template-columns: 14px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.donut-legend li:last-child { border-bottom: none; }
+.donut-legend .swatch { width: 12px; height: 12px; border-radius: 3px; }
+.donut-num { font-variant-numeric: tabular-nums; font-weight: 600; }
+.donut-num.muted { color: var(--muted); font-weight: 400; }
+
+/* Line chart (стоимость портфеля) */
+.chart-legend {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  gap: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.chart-legend li { display: flex; align-items: center; gap: 7px; }
+.chart-legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+.xirr {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.xirr b { font-size: 20px; font-variant-numeric: tabular-nums; }
+
+/* Payments bar chart */
+.payments-chart { margin-bottom: 14px; }
+.payments-chart svg { width: 100%; height: 110px; display: block; }
+.payments-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
 
 /* Compare */
 .compare-add { display: flex; gap: 10px; }
@@ -252,6 +353,7 @@ tbody tr:hover { background: var(--panel-2); }
   font-size: 14px;
   min-width: 110px;
 }
+.field-hint { font-size: 11px; color: var(--muted); opacity: 0.75; min-height: 13px; }
 
 .account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
 .account-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }

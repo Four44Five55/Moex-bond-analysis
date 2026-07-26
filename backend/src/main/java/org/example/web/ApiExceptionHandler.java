@@ -10,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
 
@@ -29,9 +30,16 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
     }
 
+    /** Нет статического ресурса (например, GET / или favicon.ico) → тихий 404, без стектрейса. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, String>> handleNoResource(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Ресурс не найден: " + ex.getResourcePath()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleBadRequest(IllegalArgumentException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", ex.getMessage()));
+        return badRequest(ex.getMessage());
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, MissingRequestHeaderException.class})
@@ -39,7 +47,16 @@ public class ApiExceptionHandler {
         String message = ex instanceof MethodArgumentNotValidException manv && manv.getFieldError() != null
                 ? manv.getFieldError().getField() + ": " + manv.getFieldError().getDefaultMessage()
                 : ex.getMessage();
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", message));
+        return badRequest(message);
+    }
+
+    /**
+     * {@code Map.of} падает с NPE на null-значении, а исключение вполне может прийти без сообщения —
+     * тогда вместо 400 клиент получал бы 500 из самого обработчика.
+     */
+    private ResponseEntity<Map<String, String>> badRequest(String message) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", message == null ? "Некорректный запрос" : message));
     }
 
     @ExceptionHandler(Exception.class)

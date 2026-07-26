@@ -1,14 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
+import { instrumentsApi } from "../../shared/api/endpoints";
 import type { AddTransactionRequest, TradeSide } from "./types";
+import { InstrumentPicker } from "../instruments/InstrumentPicker";
 
 interface Props {
   accountId: number;
   defaultSecId?: string;
   defaultPrice?: number;
   onDone?: () => void;
+}
+
+/** MOEX-код бумаги: латиница/цифры (VTBR, SBER, RU000A…) — в отличие от названия с пробелами/кириллицей. */
+const isSecId = (s: string) => /^[A-Za-z0-9]{3,20}$/.test(s);
+
+function minusDays(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice, onDone }: Props) {
@@ -19,6 +30,21 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
   const [quantity, setQuantity] = useState(1);
   const [price, setPrice] = useState(defaultPrice ?? 0);
   const [aci, setAci] = useState(0);
+
+  // Цена закрытия на дату сделки (берём последнюю торговую сессию на дату или чуть раньше — окно 7 дней
+  // перекрывает выходные/праздники). Свечи облигаций приходят в % номинала — совпадает с полем «Цена».
+  const priceQuery = useQuery({
+    queryKey: ["trade-price", secId, tradeDate],
+    queryFn: () => instrumentsApi.candles(secId, { interval: 24, from: minusDays(tradeDate, 7), to: tradeDate }),
+    enabled: isSecId(secId) && !!tradeDate,
+  });
+
+  useEffect(() => {
+    const cs = priceQuery.data;
+    if (cs && cs.length > 0) {
+      setPrice(Number(cs[cs.length - 1].close.toFixed(6)));
+    }
+  }, [priceQuery.data]);
 
   const mutation = useMutation({
     mutationFn: (req: AddTransactionRequest) => portfolioApi.addTransaction(accountId, req),
@@ -33,11 +59,13 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
     mutation.mutate({ secId: secId.trim().toUpperCase(), side, tradeDate, quantity, price, aci });
   };
 
+  const noCandle = isSecId(secId) && priceQuery.isSuccess && (priceQuery.data?.length ?? 0) === 0;
+
   return (
     <form className="txn-form" onSubmit={submit}>
       <label>
-        Код
-        <input value={secId} onChange={(e) => setSecId(e.target.value)} required placeholder="SBER" />
+        Инструмент
+        <InstrumentPicker value={secId} onChange={setSecId} required />
       </label>
       <label>
         Тип
@@ -56,11 +84,14 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
       </label>
       <label>
         Цена
-        <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(Number(e.target.value))} />
+        <input type="number" min="0" step="any" value={price} onChange={(e) => setPrice(Number(e.target.value))} />
+        <span className="field-hint">
+          {priceQuery.isFetching ? "загружаю цену на дату…" : noCandle ? "нет котировок на дату — впишите вручную" : "закрытие на дату сделки"}
+        </span>
       </label>
       <label>
         НКД
-        <input type="number" min="0" step="0.01" value={aci} onChange={(e) => setAci(Number(e.target.value))} />
+        <input type="number" min="0" step="any" value={aci} onChange={(e) => setAci(Number(e.target.value))} />
       </label>
       <button className="btn-primary" type="submit" disabled={mutation.isPending}>
         {mutation.isPending ? "…" : "Добавить"}

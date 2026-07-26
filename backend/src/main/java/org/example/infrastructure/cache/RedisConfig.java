@@ -22,21 +22,33 @@ public class RedisConfig {
 
     @Bean
     public RedisCacheConfiguration cacheConfiguration() {
-        ObjectMapper mapper = new ObjectMapper()
-                .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-                .activateDefaultTyping(
-                        BasicPolymorphicTypeValidator.builder()
-                                .allowIfSubType(Object.class)
-                                .build(),
-                        ObjectMapper.DefaultTyping.EVERYTHING,
-                        JsonTypeInfo.As.PROPERTY);
-
-        GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(mapper);
+        GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(objectMapper());
 
         return RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofMinutes(5))
                 .disableCachingNullValues()
                 .serializeValuesWith(SerializationPair.fromSerializer(serializer));
+    }
+
+    /**
+     * Записывает имя класса в JSON, иначе record-DTO, даты и enum'ы не восстанавливаются.
+     * <p>
+     * Список разрешённых пакетов ограничен намеренно: валидатор вида {@code allowIfSubType(Object.class)}
+     * не ограничивает ничего и превращает содержимое кеша в инструкцию, какой класс инстанцировать.
+     * Кешируются только DTO приложения и стандартные типы — их и разрешаем.
+     */
+    static ObjectMapper objectMapper() {
+        return new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .activateDefaultTyping(
+                        BasicPolymorphicTypeValidator.builder()
+                                .allowIfSubType("org.example.")
+                                .allowIfSubType("java.util.")
+                                .allowIfSubType("java.time.")
+                                .allowIfSubType("java.lang.")
+                                .build(),
+                        ObjectMapper.DefaultTyping.EVERYTHING,
+                        JsonTypeInfo.As.PROPERTY);
     }
 }

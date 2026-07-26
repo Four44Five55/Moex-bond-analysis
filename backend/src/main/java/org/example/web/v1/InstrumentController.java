@@ -6,8 +6,11 @@ import org.example.application.SyncService;
 import org.example.domain.filter.FilterCriteria;
 import org.example.domain.model.InstrumentType;
 import org.example.web.dto.CandleDto;
+import org.example.web.dto.DividendInfoDto;
 import org.example.web.dto.InstrumentDto;
+import org.example.web.dto.InstrumentPaymentDto;
 import org.example.web.dto.PagedResponse;
+import org.example.web.dto.PerformanceDto;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -92,6 +95,24 @@ public class InstrumentController {
         LocalDate fromDate = from != null ? from : LocalDate.now().minusYears(1);
         LocalDate toDate = to != null ? to : LocalDate.now();
         return candleService.getCandles(secId, interval, fromDate, toDate);
+    }
+
+    /** История выплат инструмента (купоны/амортизации или дивиденды) из MOEX. */
+    @GetMapping("/{secId}/payments")
+    public List<InstrumentPaymentDto> payments(@PathVariable String secId) {
+        return instrumentService.payments(secId);
+    }
+
+    /** Доходности за периоды (1Д/1Н/1М/1Г/YTD) и 52-недельный диапазон цен. */
+    @GetMapping("/{secId}/performance")
+    public PerformanceDto performance(@PathVariable String secId) {
+        return instrumentService.performance(secId);
+    }
+
+    /** Дивидендная доходность акции за 12 месяцев (сумма/доходность/число выплат). */
+    @GetMapping("/{secId}/dividend-yield")
+    public DividendInfoDto dividendYield(@PathVariable String secId) {
+        return instrumentService.dividendYield(secId);
     }
 
     /** Ручная синхронизация с MOEX (облигации + акции). */

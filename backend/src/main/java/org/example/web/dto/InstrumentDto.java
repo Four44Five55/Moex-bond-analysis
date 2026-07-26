@@ -41,6 +41,9 @@ public record InstrumentDto(
         Boolean callable,
         Boolean puttable,
         Boolean suspiciousYield,
+        Double accruedInterest,
+        Double currentYield,
+        LocalDate offerDate,
 
         // Акции
         Integer lotSize,

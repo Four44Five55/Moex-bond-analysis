@@ -38,27 +38,18 @@ public class IncomeForecaster {
     public List<IncomeEvent> dividendIncome(String secId, double quantity,
                                             List<DividendPayment> dividends,
                                             LocalDate from) {
-        if (dividends.isEmpty() || quantity <= 0) {
+        if (quantity <= 0) {
             return List.of();
         }
-        List<DividendPayment> sorted = dividends.stream()
-                .sorted(Comparator.comparing(DividendPayment::recordDate))
-                .toList();
-
-        List<DividendPayment> future = sorted.stream()
+        // Только реально объявленные MOEX выплаты с будущей датой закрытия реестра.
+        // Прикидку «по прошлогоднему дивиденду» намеренно не строим: для разовых выплат
+        // (как VTBR 25.58 за 2025) она вводит в заблуждение. Нет объявления — нет строки;
+        // MOEX публикует дивиденд в dividends.json только после фиксации даты отсечки.
+        return dividends.stream()
                 .filter(d -> !d.recordDate().isBefore(from))
+                .sorted(Comparator.comparing(DividendPayment::recordDate))
+                .map(d -> new IncomeEvent(d.recordDate(), secId, IncomeKind.DIVIDEND,
+                        d.perShare() * quantity, false))
                 .toList();
-
-        if (!future.isEmpty()) {
-            return future.stream()
-                    .map(d -> new IncomeEvent(d.recordDate(), secId, IncomeKind.DIVIDEND,
-                            d.perShare() * quantity, false))
-                    .toList();
-        }
-
-        // Оценка: последняя известная выплата, спроецированная на год вперёд
-        DividendPayment last = sorted.get(sorted.size() - 1);
-        return List.of(new IncomeEvent(last.recordDate().plusYears(1), secId, IncomeKind.DIVIDEND,
-                last.perShare() * quantity, true));
     }
 }

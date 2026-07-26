@@ -3,21 +3,37 @@ package org.example.application;
 import org.example.application.portfolio.InstrumentPricing;
 import org.example.domain.model.*;
 import org.example.domain.portfolio.*;
+import org.example.domain.portfolio.allocation.AllocationCalculator;
+import org.example.domain.portfolio.allocation.AllocationDimension;
+import org.example.domain.portfolio.allocation.AllocationDimensionFactory;
+import org.example.domain.portfolio.allocation.Holding;
+import org.example.domain.portfolio.history.CashFlow;
+import org.example.domain.portfolio.history.DatedTrade;
+import org.example.domain.portfolio.history.PortfolioValueCalculator;
+import org.example.domain.portfolio.history.PortfolioValueRequest;
+import org.example.domain.portfolio.history.ValuePoint;
+import org.example.domain.portfolio.history.XirrCalculator;
 import org.example.domain.portfolio.tax.TaxBreakdown;
 import org.example.domain.portfolio.tax.TaxContext;
+import org.example.domain.portfolio.tax.TaxRates;
 import org.example.domain.portfolio.tax.TaxStrategyFactory;
 import org.example.infrastructure.persistence.InstrumentRepository;
 import org.example.infrastructure.persistence.TransactionRepository;
 import org.example.domain.port.CorporateActionsProvider;
+import org.example.web.dto.portfolio.AllocationSliceDto;
 import org.example.web.dto.portfolio.IncomeEventDto;
+import org.example.web.dto.portfolio.PortfolioHistoryDto;
 import org.example.web.dto.portfolio.PortfolioSummaryDto;
 import org.example.web.dto.portfolio.PositionDto;
+import org.example.web.dto.portfolio.ValuePointDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,36 +47,56 @@ public class PortfolioService {
 
     private static final Logger log = LoggerFactory.getLogger(PortfolioService.class);
     private static final int PROJECTION_MONTHS = 12;
+    private static final int DEFAULT_HISTORY_MONTHS = 12;
+    private static final int MAX_HISTORY_MONTHS = 120;
+    /** Код дневного интервала свечей MOEX. */
+    private static final int DAILY_INTERVAL = 24;
 
     private final AccountService accountService;
     private final TransactionRepository transactionRepository;
     private final InstrumentRepository instrumentRepository;
+    private final CandleService candleService;
     private final FifoCalculator fifoCalculator;
     private final IncomeForecaster incomeForecaster;
     private final CorporateActionsProvider corporateActions;
     private final TaxStrategyFactory taxStrategyFactory;
+    private final AllocationDimensionFactory allocationDimensionFactory;
+    private final AllocationCalculator allocationCalculator;
+    private final PortfolioValueCalculator portfolioValueCalculator;
+    private final XirrCalculator xirrCalculator;
 
     public PortfolioService(AccountService accountService,
                             TransactionRepository transactionRepository,
                             InstrumentRepository instrumentRepository,
+                            CandleService candleService,
                             FifoCalculator fifoCalculator,
                             IncomeForecaster incomeForecaster,
                             CorporateActionsProvider corporateActions,
-                            TaxStrategyFactory taxStrategyFactory) {
+                            TaxStrategyFactory taxStrategyFactory,
+                            AllocationDimensionFactory allocationDimensionFactory,
+                            AllocationCalculator allocationCalculator,
+                            PortfolioValueCalculator portfolioValueCalculator,
+                            XirrCalculator xirrCalculator) {
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
         this.instrumentRepository = instrumentRepository;
+        this.candleService = candleService;
         this.fifoCalculator = fifoCalculator;
         this.incomeForecaster = incomeForecaster;
         this.corporateActions = corporateActions;
         this.taxStrategyFactory = taxStrategyFactory;
+        this.allocationDimensionFactory = allocationDimensionFactory;
+        this.allocationCalculator = allocationCalculator;
+        this.portfolioValueCalculator = portfolioValueCalculator;
+        this.xirrCalculator = xirrCalculator;
     }
 
     private record PositionView(Instrument instrument, String secId, double quantity,
                                 double openCost, double marketValue, double unrealizedPnl) {
     }
 
-    private record Snapshot(Account account, List<PositionView> positions,
+    private record Snapshot(Account account, List<Transaction> transactions,
+                            List<PositionView> positions,
                             List<RealizedSale> realizedSales, double totalCommission) {
     }
 
@@ -82,7 +118,131 @@ public class PortfolioService {
 
     public TaxBreakdown tax(String clientId, Long accountId) {
         Account account = accountService.getOwned(clientId, accountId);
-        return computeTax(account, snapshot(account));
+        Snapshot s = snapshot(account);
+        return computeTax(account, s.realizedSales(), projectedAnnualIncome(rawIncomeEvents(s)));
+    }
+
+    /** Фактически полученные выплаты: только даты в прошлом и только если на дату отсечки была позиция. */
+    public List<IncomeEventDto> received(String clientId, Long accountId) {
+        Account account = accountService.getOwned(clientId, accountId);
+        boolean couponTaxable = isCouponTaxable(account);
+        List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
+        return realizedIncomeEvents(txns).stream()
+                .sorted(Comparator.comparing(IncomeEvent::date).reversed())
+                .map(e -> toIncomeDto(e, account, couponTaxable))
+                .toList();
+    }
+
+    /** Аллокация портфеля по измерению (тип/сектор/валюта) — доли по рыночной стоимости позиций. */
+    public List<AllocationSliceDto> allocation(String clientId, Long accountId, String by) {
+        Account account = accountService.getOwned(clientId, accountId);
+        AllocationDimension dimension = allocationDimensionFactory.forKey(by);
+        Snapshot s = snapshot(account);
+        List<Holding> holdings = s.positions().stream()
+                .map(p -> new Holding(dimension.categoryOf(p.instrument()), p.marketValue()))
+                .toList();
+        return allocationCalculator.breakdown(holdings).stream()
+                .map(sl -> new AllocationSliceDto(sl.category(), sl.value(), sl.percent()))
+                .toList();
+    }
+
+    /**
+     * Дневной ряд стоимости портфеля за последние {@code months} месяцев и XIRR.
+     * <p>
+     * Ряд ограничен периодом, а денежные потоки для XIRR берутся за <b>всю</b> историю счёта:
+     * доходность, посчитанная по обрезанной истории, не имеет смысла. Терминальным потоком
+     * выступает текущая рыночная стоимость позиций.
+     * <p>
+     * Транзакция намеренно перекрывает read-only класса: {@link CandleService} догружает
+     * недостающие свечи и сохраняет их, а в read-only транзакции запись отвергается.
+     */
+    @Transactional
+    public PortfolioHistoryDto valueSeries(String clientId, Long accountId, int months) {
+        Account account = accountService.getOwned(clientId, accountId);
+        List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
+        if (txns.isEmpty()) {
+            return PortfolioHistoryDto.empty();
+        }
+
+        LocalDate to = LocalDate.now();
+        LocalDate periodStart = to.minusMonths(clampMonths(months));
+        LocalDate earliestTrade = txns.get(0).getTradeDate();
+        LocalDate from = earliestTrade.isAfter(periodStart) ? earliestTrade : periodStart;
+        if (from.isAfter(to)) {
+            from = to; // сделки, датированные будущим — ряд вырождается в одну точку
+        }
+
+        Map<String, Instrument> instruments = instrumentRepository
+                .findAllBySecIdIn(txns.stream().map(Transaction::getSecId).distinct().toList())
+                .stream().collect(Collectors.toMap(Instrument::getSecId, i -> i));
+
+        PortfolioValueRequest.Builder request = PortfolioValueRequest.builder(from, to)
+                .trades(toDatedTrades(txns, instruments));
+        for (var entry : instruments.entrySet()) {
+            request.closes(entry.getKey(), dailyCloses(entry.getKey(), entry.getValue(), from, to));
+        }
+
+        List<ValuePoint> series = portfolioValueCalculator.series(request.build());
+        Double xirr = computeXirr(txns, instruments, series, to);
+
+        return new PortfolioHistoryDto(
+                series.stream()
+                        .map(p -> new ValuePointDto(p.date(), p.value(), p.invested(), p.pnl()))
+                        .toList(),
+                xirr == null ? null : xirr * 100.0);
+    }
+
+    private int clampMonths(int months) {
+        return Math.min(Math.max(months, 1), MAX_HISTORY_MONTHS);
+    }
+
+    private List<DatedTrade> toDatedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
+        return txns.stream()
+                .map(t -> new DatedTrade(t.getSecId(), t.getSide(), t.getTradeDate(), t.getQuantity(),
+                        InstrumentPricing.tradeMoneyPerUnit(instruments.get(t.getSecId()),
+                                t.getPrice(), t.getAci()),
+                        t.getCommission()))
+                .toList();
+    }
+
+    /** Дневные цены закрытия, приведённые к деньгам за бумагу. Сбой источника → бумага без истории. */
+    private Map<LocalDate, Double> dailyCloses(String secId, Instrument instrument,
+                                               LocalDate from, LocalDate to) {
+        try {
+            Map<LocalDate, Double> closes = new HashMap<>();
+            for (var candle : candleService.getCandles(secId, DAILY_INTERVAL, from, to)) {
+                LocalDate date = Instant.ofEpochSecond(candle.time())
+                        .atZone(ZoneOffset.UTC).toLocalDate();
+                closes.put(date, InstrumentPricing.moneyPerUnit(instrument, candle.close()));
+            }
+            return closes;
+        } catch (RuntimeException e) {
+            log.warn("История цен по {} недоступна, бумага не войдёт в ряд стоимости: {}", secId, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /**
+     * Потоки для XIRR: покупки — со знаком минус (с комиссией), продажи — плюс (за вычетом комиссии),
+     * полученные купоны и дивиденды — плюс, и завершающим потоком текущая стоимость позиций.
+     */
+    private Double computeXirr(List<Transaction> txns, Map<String, Instrument> instruments,
+                               List<ValuePoint> series, LocalDate to) {
+        List<CashFlow> flows = new ArrayList<>();
+        for (Transaction t : txns) {
+            double money = t.getQuantity() * InstrumentPricing.tradeMoneyPerUnit(
+                    instruments.get(t.getSecId()), t.getPrice(), t.getAci());
+            flows.add(new CashFlow(t.getTradeDate(), t.getSide() == TradeSide.BUY
+                    ? -(money + t.getCommission())
+                    : money - t.getCommission()));
+        }
+        realizedIncomeEvents(txns).forEach(e -> flows.add(new CashFlow(e.date(), e.gross())));
+
+        double terminalValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
+        if (terminalValue > 0) {
+            flows.add(new CashFlow(to, terminalValue));
+        }
+        return xirrCalculator.compute(flows);
     }
 
     public PortfolioSummaryDto summary(String clientId, Long accountId) {
@@ -94,12 +254,15 @@ public class PortfolioService {
         double unrealized = marketValue - invested;
         double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
 
+        // Прогноз считается один раз и переиспользуется в налоге — обход выплат ходит во внешний источник
         double[] annual = projectedAnnualIncome(rawIncomeEvents(s));
         double projectedIncome = annual[0] + annual[1];
-        double estimatedTax = computeTax(account, s).totalTax();
+        double estimatedTax = computeTax(account, s.realizedSales(), annual).totalTax();
+        double receivedIncome = realizedIncomeEvents(s.transactions()).stream()
+                .mapToDouble(IncomeEvent::gross).sum();
 
         return new PortfolioSummaryDto(invested, marketValue, unrealized, realized,
-                s.totalCommission(), projectedIncome, estimatedTax, s.positions().size());
+                s.totalCommission(), receivedIncome, projectedIncome, estimatedTax, s.positions().size());
     }
 
     // --- Ядро расчёта ---
@@ -135,7 +298,62 @@ public class PortfolioService {
                         marketValue, marketValue - openCost));
             }
         }
-        return new Snapshot(account, positions, realized, totalCommission);
+        return new Snapshot(account, txns, positions, realized, totalCommission);
+    }
+
+    /** Реально полученные выплаты по истории сделок: событие в прошлом × позиция на дату отсечки. */
+    private List<IncomeEvent> realizedIncomeEvents(List<Transaction> txns) {
+        Map<String, List<Transaction>> bySec = txns.stream()
+                .collect(Collectors.groupingBy(Transaction::getSecId, LinkedHashMap::new, Collectors.toList()));
+        Map<String, Instrument> instruments = instrumentRepository.findAllBySecIdIn(new ArrayList<>(bySec.keySet()))
+                .stream().collect(Collectors.toMap(Instrument::getSecId, i -> i));
+
+        LocalDate today = LocalDate.now();
+        List<IncomeEvent> events = new ArrayList<>();
+        for (var entry : bySec.entrySet()) {
+            String secId = entry.getKey();
+            Instrument inst = instruments.get(secId);
+            List<Transaction> ts = entry.getValue();
+            try {
+                if (inst instanceof Bond) {
+                    for (var c : corporateActions.coupons(secId)) {
+                        addRealized(events, secId, IncomeKind.COUPON, c.date(), c.perBond(), ts, today);
+                    }
+                    for (var a : corporateActions.amortizations(secId)) {
+                        addRealized(events, secId, IncomeKind.AMORTIZATION, a.date(), a.perBond(), ts, today);
+                    }
+                } else if (inst instanceof Share) {
+                    for (var d : corporateActions.dividends(secId)) {
+                        addRealized(events, secId, IncomeKind.DIVIDEND, d.recordDate(), d.perShare(), ts, today);
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.warn("История выплат по {} пропущена: {}", secId, e.getMessage());
+            }
+        }
+        return events;
+    }
+
+    private void addRealized(List<IncomeEvent> events, String secId, IncomeKind kind,
+                             LocalDate date, double perUnit, List<Transaction> txns, LocalDate today) {
+        if (date == null || !date.isBefore(today)) {
+            return; // только прошедшие выплаты
+        }
+        double qty = quantityAsOf(txns, date);
+        if (qty > 1e-9) {
+            events.add(new IncomeEvent(date, secId, kind, perUnit * qty, false));
+        }
+    }
+
+    /** Количество бумаг на конец дня {@code date} по истории сделок (BUY − SELL, tradeDate ≤ date). */
+    private double quantityAsOf(List<Transaction> txns, LocalDate date) {
+        double qty = 0;
+        for (Transaction t : txns) {
+            if (!t.getTradeDate().isAfter(date)) {
+                qty += t.getSide() == TradeSide.BUY ? t.getQuantity() : -t.getQuantity();
+            }
+        }
+        return qty;
     }
 
     private List<IncomeEvent> rawIncomeEvents(Snapshot s) {
@@ -166,7 +384,7 @@ public class PortfolioService {
         LocalDate to = from.plusMonths(PROJECTION_MONTHS);
         double coupon = 0, dividend = 0;
         for (IncomeEvent e : events) {
-            if (e.date().isAfter(to)) {
+            if (e.date().isBefore(from) || e.date().isAfter(to)) {
                 continue;
             }
             if (e.kind() == IncomeKind.COUPON) {
@@ -178,9 +396,9 @@ public class PortfolioService {
         return new double[]{coupon, dividend};
     }
 
-    private TaxBreakdown computeTax(Account account, Snapshot s) {
-        double[] annual = projectedAnnualIncome(rawIncomeEvents(s));
-        TaxContext ctx = new TaxContext(account, s.realizedSales(), annual[0], annual[1]);
+    /** @param annual [couponGross, dividendGross] — считается вызывающим, чтобы не обходить выплаты дважды. */
+    private TaxBreakdown computeTax(Account account, List<RealizedSale> sales, double[] annual) {
+        TaxContext ctx = new TaxContext(account, sales, annual[0], annual[1]);
         return taxStrategyFactory.forAccount(account).compute(ctx);
     }
 
@@ -199,9 +417,9 @@ public class PortfolioService {
 
     private IncomeEventDto toIncomeDto(IncomeEvent e, Account account, boolean couponTaxable) {
         double net = switch (e.kind()) {
-            case AMORTIZATION -> e.gross();
+            case AMORTIZATION -> e.gross();  // возврат тела долга, не доход
             case COUPON -> couponTaxable ? e.gross() * (1 - account.getBaseTaxRate() / 100.0) : e.gross();
-            case DIVIDEND -> e.gross() * (1 - 0.13);
+            case DIVIDEND -> e.gross() * (1 - TaxRates.DIVIDEND_PCT / 100.0);
         };
         return new IncomeEventDto(e.date(), e.secId(), e.kind(), e.gross(), net, e.estimate());
     }

@@ -69,11 +69,11 @@ export function PortfoliosPage() {
           )}
           <label>
             Комиссия, %
-            <input type="number" min="0" step="0.01" value={commission} onChange={(e) => setCommission(Number(e.target.value))} />
+            <input type="number" min="0" step="any" value={commission} onChange={(e) => setCommission(Number(e.target.value))} />
           </label>
           <label>
             Ставка НДФЛ, %
-            <input type="number" min="0" step="1" value={taxRate} onChange={(e) => setTaxRate(Number(e.target.value))} />
+            <input type="number" min="0" step="any" value={taxRate} onChange={(e) => setTaxRate(Number(e.target.value))} />
           </label>
           <button className="btn-primary" type="submit" disabled={create.isPending}>
             Создать

@@ -49,10 +49,14 @@ public class SyncService {
     }
 
     @Transactional
+    // Свежие котировки меняют и производные от них ответы — иначе карточка инструмента
+    // обновляется, а её доходности показывают старую цену, пока не истечёт TTL
     @Caching(evict = {
             @CacheEvict(cacheNames = "instruments", allEntries = true),
             @CacheEvict(cacheNames = "instrument", allEntries = true),
-            @CacheEvict(cacheNames = "summary", allEntries = true)
+            @CacheEvict(cacheNames = "summary", allEntries = true),
+            @CacheEvict(cacheNames = "performance", allEntries = true),
+            @CacheEvict(cacheNames = "dividendYield", allEntries = true)
     })
     public int syncAll() {
         long start = System.currentTimeMillis();

@@ -63,9 +63,31 @@ export interface PortfolioSummary {
   unrealizedPnl: number;
   realizedPnl: number;
   totalCommission: number;
+  receivedIncome: number;
   projectedAnnualIncome: number;
   estimatedTax: number;
   positionsCount: number;
+}
+
+export interface ValuePoint {
+  date: string;
+  value: number;
+  invested: number;
+  pnl: number;
+}
+
+export interface PortfolioHistory {
+  points: ValuePoint[];
+  /** null, если доходность не определена: счёт только пополнялся и ничего не возвращал. */
+  xirrPct: number | null;
+}
+
+export type AllocationDimension = "type" | "sector" | "currency";
+
+export interface AllocationSlice {
+  category: string;
+  value: number;
+  percent: number;
 }
 
 export interface IncomeEvent {

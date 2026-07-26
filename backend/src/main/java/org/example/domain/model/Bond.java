@@ -39,6 +39,14 @@ public class Bond extends Instrument {
     @Column(name = "next_coupon_date")
     private LocalDate nextCouponDate;
 
+    /** Накопленный купонный доход (НКД) на одну облигацию, в валюте. */
+    @Column(name = "accrued_interest")
+    private double accruedInterest;
+
+    /** Ближайшая дата оферты (put/call/выкуп), если есть. */
+    @Column(name = "offer_date")
+    private LocalDate offerDate;
+
     @Column(name = "issue_date")
     private LocalDate issueDate;
 
@@ -77,5 +85,12 @@ public class Bond extends Instrument {
     @Transient
     public double getAnnualCoupon() {
         return couponRate * faceValue / 100.0;
+    }
+
+    /** Текущая доходность: годовой купон к текущей рыночной цене (в валюте), %. */
+    @Transient
+    public double getCurrentYield() {
+        double price = getCurrentPrice();
+        return price > 0 ? getAnnualCoupon() / price * 100.0 : 0.0;
     }
 }

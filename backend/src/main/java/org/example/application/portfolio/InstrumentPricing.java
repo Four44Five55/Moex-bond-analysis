@@ -25,9 +25,18 @@ public final class InstrumentPricing {
         if (instrument == null || instrument.getLastPrice() == null) {
             return 0.0;
         }
+        return moneyPerUnit(instrument, instrument.getLastPrice());
+    }
+
+    /**
+     * Стоимость одной бумаги по произвольной котировке (например, цене закрытия свечи).
+     * Котировки облигаций MOEX выражены в процентах от номинала — без этого перевода
+     * облигационная часть портфеля усохнет в номинал раз.
+     */
+    public static double moneyPerUnit(Instrument instrument, double price) {
         if (instrument instanceof Bond bond) {
-            return bond.getFaceValue() * instrument.getLastPrice() / 100.0;
+            return bond.getFaceValue() * price / 100.0;
         }
-        return instrument.getLastPrice();
+        return price;
     }
 }

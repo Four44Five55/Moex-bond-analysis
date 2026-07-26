@@ -71,6 +71,8 @@ public class MoexBondParser {
             bond.setMaturityDate(row.getDate("MATDATE"));
             bond.setNextCouponDate(row.getDate("NEXTCOUPON"));
             bond.setIssueDate(row.getDate("PREVDATE"));
+            bond.setAccruedInterest(row.getDouble("ACCRUEDINT"));
+            bond.setOfferDate(firstNonNullDate(row, "OFFERDATE", "BUYBACKDATE"));
 
             bond.setCallable(row.hasNonEmpty("CALLOPTIONDATE"));
             bond.setPuttable(row.hasNonEmpty("PUTOPTIONDATE"));
@@ -92,6 +94,17 @@ public class MoexBondParser {
             logger.debug("Пропущена облигация из-за ошибки разбора: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** Первая непустая дата из перечисленных столбцов (у разных выпусков оферта в разных полях). */
+    private java.time.LocalDate firstNonNullDate(MoexTable.Row row, String... columns) {
+        for (String column : columns) {
+            java.time.LocalDate date = row.getDate(column);
+            if (date != null) {
+                return date;
+            }
+        }
+        return null;
     }
 
     private Map<String, Double> readDurations(MoexTable marketData) {
