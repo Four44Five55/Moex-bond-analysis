@@ -17,6 +17,8 @@ public record DepositRequest(
         @NotNull LocalDate maturesOn,
         boolean capitalized,
         @NotNull PayoutPeriod payoutPeriod,
-        String note
+        String note,
+        /** Счёт, с которого сняты деньги; null — вклад открыт деньгами со стороны. */
+        Long sourceAccountId
 ) {
 }

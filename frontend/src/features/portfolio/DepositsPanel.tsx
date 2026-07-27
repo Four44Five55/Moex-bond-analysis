@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { num, pct, date } from "../../shared/lib/format";
 import { DateField } from "../../shared/ui/DateField";
-import type { Deposit, DepositTaxBreakdown, PayoutPeriod } from "./types";
+import type { Account, Deposit, DepositTaxBreakdown, PayoutPeriod } from "./types";
 
 const PERIODS: Array<{ value: PayoutPeriod; label: string }> = [
   { value: "MONTHLY", label: "Ежемесячно" },
@@ -27,10 +27,20 @@ const inAYear = () => {
  * Банковские вклады. Привязаны к клиенту, а не к брокерскому счёту: у вклада нет сделок,
  * бумаг и котировок — его стоимость на любую дату считает бэкенд по ставке и условиям.
  */
-export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: DepositTaxBreakdown | undefined }) {
+export function DepositsPanel({
+  deposits,
+  tax,
+  accounts,
+}: {
+  deposits: Deposit[];
+  tax: DepositTaxBreakdown | undefined;
+  /** Счета клиента — из какого сняты деньги на вклад. */
+  accounts: Account[];
+}) {
   const qc = useQueryClient();
 
   const [open, setOpen] = useState(false);
+  const [sourceAccountId, setSourceAccountId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [principal, setPrincipal] = useState(0);
   const [ratePct, setRatePct] = useState(20);
@@ -51,6 +61,7 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
         maturesOn,
         capitalized,
         payoutPeriod,
+        sourceAccountId,
       }),
     onSuccess: () => {
       invalidate();
@@ -108,6 +119,23 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
               ))}
             </select>
           </label>
+          <label>
+            Деньги с
+            <select
+              value={sourceAccountId ?? ""}
+              onChange={(e) => setSourceAccountId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">со стороны</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <span className="field-hint">
+              {sourceAccountId == null
+                ? "новые деньги в портфеле"
+                : "спишется с этого счёта, не считается новым вложением"}
+            </span>
+          </label>
           <label className="checkbox">
             <input type="checkbox" checked={capitalized} onChange={(e) => setCapitalized(e.target.checked)} />
             С капитализацией
@@ -126,7 +154,7 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
             <table>
               <thead>
                 <tr>
-                  <th>Вклад</th><th className="num">Сумма</th><th className="num">Ставка</th>
+                  <th>Вклад</th><th className="num">Сумма</th><th>Деньги с</th><th className="num">Ставка</th>
                   <th>Проценты</th><th>Срок</th><th className="num">Сейчас стоит</th>
                   <th className="num">Заработано</th><th>Ближайшая выплата</th><th></th>
                 </tr>
@@ -136,6 +164,7 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
                   <tr key={d.id} className={d.matured ? "muted-row" : undefined}>
                     <td>{d.name}</td>
                     <td className="num">{num(d.principal)}</td>
+                    <td>{d.sourceAccountName ?? "со стороны"}</td>
                     <td className="num">{pct(d.ratePct)}</td>
                     <td>{periodLabel(d.payoutPeriod)}{d.capitalized ? ", с кап." : ""}</td>
                     <td>{date(d.openedOn)} — {date(d.maturesOn)}</td>

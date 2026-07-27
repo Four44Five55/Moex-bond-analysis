@@ -11,6 +11,8 @@ import java.time.LocalDate;
  * @param accruedNotPaid проценты, уже заработанные, но пока не полученные на руки
  * @param totalInterest  проценты за весь срок вклада
  * @param nextPayoutOn   дата ближайшего поступления процентов (null — если срок уже вышел)
+ * @param sourceAccountId счёт, с которого сняты деньги; null — вклад открыт деньгами со стороны
+ * @param sourceAccountName название этого счёта — чтобы фронт не сопоставлял списки сам
  */
 public record DepositDto(
         Long id,
@@ -26,6 +28,8 @@ public record DepositDto(
         double accruedNotPaid,
         double totalInterest,
         LocalDate nextPayoutOn,
-        boolean matured
+        boolean matured,
+        Long sourceAccountId,
+        String sourceAccountName
 ) {
 }

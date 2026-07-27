@@ -25,6 +25,16 @@ public class Deposit {
     @Column(name = "client_id", nullable = false, length = 64)
     private String clientId;
 
+    /**
+     * Счёт, с которого сняты деньги на вклад; {@code null} — вклад открыт деньгами со стороны.
+     * <p>
+     * Различие меняет расчёт внесённого капитала: перевод с брокерского счёта — движение внутри
+     * портфеля, а не новые деньги, и учитывать его как внесённое значило бы посчитать одну и ту же
+     * сумму дважды. Заодно тело такого вклада уходит из свободных денег счёта-источника.
+     */
+    @Column(name = "source_account_id")
+    private Long sourceAccountId;
+
     @Column(nullable = false)
     private String name;
 

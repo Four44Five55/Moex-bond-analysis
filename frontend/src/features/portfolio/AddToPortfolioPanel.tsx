@@ -3,13 +3,16 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { AddTransactionForm } from "./AddTransactionForm";
+import type { TradeSide } from "./types";
 
 interface Props {
   secId: string;
   price?: number;
+  /** Сторона сделки, выбранная кнопкой «Купить» / «Продать» у названия бумаги. */
+  side?: TradeSide;
 }
 
-export function AddToPortfolioPanel({ secId, price }: Props) {
+export function AddToPortfolioPanel({ secId, price, side = "BUY" }: Props) {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: portfolioApi.listAccounts });
   const [accountId, setAccountId] = useState<number | null>(null);
   const [done, setDone] = useState(false);
@@ -29,7 +32,7 @@ export function AddToPortfolioPanel({ secId, price }: Props) {
 
   return (
     <section className="panel">
-      <h2>Добавить в портфель</h2>
+      <h2>{side === "SELL" ? "Продать из портфеля" : "Добавить в портфель"}</h2>
       <div className="filters" style={{ marginBottom: 12 }}>
         <label>
           Счёт
@@ -50,7 +53,13 @@ export function AddToPortfolioPanel({ secId, price }: Props) {
         </label>
       </div>
       {accountId && !done && (
-        <AddTransactionForm accountId={accountId} defaultSecId={secId} defaultPrice={price} onDone={() => setDone(true)} />
+        <AddTransactionForm
+          accountId={accountId}
+          defaultSecId={secId}
+          defaultPrice={price}
+          side={side}
+          onDone={() => setDone(true)}
+        />
       )}
       {done && <div className="hint">Сделка добавлена. <Link to={`/portfolio/${accountId}`} className="link">Открыть счёт →</Link></div>}
     </section>

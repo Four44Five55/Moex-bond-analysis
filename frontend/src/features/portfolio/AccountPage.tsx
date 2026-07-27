@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
@@ -9,7 +9,7 @@ import { DonutChart } from "../../shared/charts/DonutChart";
 import { LineChart } from "../../shared/charts/LineChart";
 import { ShowMore } from "../../shared/ui/ShowMore";
 import { num, pct, date } from "../../shared/lib/format";
-import type { AllocationDimension, IncomeKind } from "./types";
+import type { AllocationDimension, IncomeKind, Position, TradeSide } from "./types";
 
 const ALLOCATION_DIMS: Array<{ key: AllocationDimension; label: string }> = [
   { key: "type", label: "Тип" },
@@ -49,6 +49,13 @@ export function AccountPage() {
   const [historyMonths, setHistoryMonths] = useState(12);
   const [allIncome, setAllIncome] = useState(false);
   const [allReceived, setAllReceived] = useState(false);
+  // Что предзаполнить в форме сделки: кнопка «Продать» в позиции подставляет бумагу и остаток
+  const [trade, setTrade] = useState<{ secId: string; quantity: number; side: TradeSide }>({
+    secId: "",
+    quantity: 1,
+    side: "BUY",
+  });
+  const tradeRef = useRef<HTMLElement>(null);
 
   const account = useQuery({ queryKey: ["account", id, "meta"], queryFn: () => portfolioApi.getAccount(id) });
   // Сводка, позиции, выплаты и налог приходят вместе: серверу это один снапшот портфеля вместо пяти
@@ -95,13 +102,23 @@ export function AccountPage() {
     [history.data]
   );
 
+  // Сначала «внесено → капитал → заработано», потом состав капитала и источники прибыли:
+  // складывать их между собой нельзя, реинвестированные выплаты уже внутри себестоимости
+  /** Продажа из позиции: форма внизу открывается с этой бумагой и всем её остатком. */
+  const sellPosition = (p: Position) => {
+    setTrade({ secId: p.secId, quantity: p.quantity, side: "SELL" });
+    tradeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   const cards = [
+    { label: "Внесено своих денег", value: num(s?.externalIn) },
     { label: "Всего на счёте", value: num(s?.totalValue) },
-    { label: "Вложено", value: num(s?.invested) },
+    { label: "Заработано за всё время", value: num(s?.totalProfit), color: changeColor(s?.totalProfit ?? 0) },
     { label: "Рыночная стоимость", value: num(s?.marketValue) },
+    { label: "Себестоимость позиций", value: num(s?.invested) },
     { label: "Свободные деньги", value: num(s?.cashBalance), color: changeColor(s?.cashBalance ?? 0) },
-    { label: "Нереализованный P&L", value: num(s?.unrealizedPnl), color: changeColor(s?.unrealizedPnl ?? 0) },
-    { label: "Реализованный P&L", value: num(s?.realizedPnl), color: changeColor(s?.realizedPnl ?? 0) },
+    { label: "Переоценка бумаг", value: num(s?.unrealizedPnl), color: changeColor(s?.unrealizedPnl ?? 0) },
+    { label: "Прибыль от продаж", value: num(s?.realizedPnl), color: changeColor(s?.realizedPnl ?? 0) },
     { label: "Получено выплат", value: num(s?.receivedIncome) },
     { label: "Прогноз дохода (12 мес)", value: num(s?.projectedAnnualIncome) },
     { label: "Оценка налога", value: num(s?.estimatedTax) },
@@ -122,6 +139,23 @@ export function AccountPage() {
           </div>
         ))}
       </div>
+
+      {s && (
+        <div className="hint">
+          {s.externalIn == null ? (
+            <>
+              По счёту нет ни одного движения денег, поэтому неизвестно, сколько внесено — а без
+              этого не посчитать и заработанное. Заведите пополнение на сумму, с которой начинали.
+            </>
+          ) : (
+            <>
+              Заработано = всего на счёте − внесённое. Переоценка, прибыль от продаж и полученные
+              выплаты — это <b>источники</b> той же суммы, а не добавка к ней: реинвестированный
+              купон уже вошёл в себестоимость позиций и в их рыночную стоимость.
+            </>
+          )}
+        </div>
+      )}
 
       <section className="panel">
         <div className="panel-head">
@@ -165,7 +199,7 @@ export function AccountPage() {
                 <tr>
                   <th>Код</th><th>Название</th><th className="num">Кол-во</th><th className="num">Ср. цена</th>
                   <th className="num">Вложено</th><th className="num">Тек. цена</th><th className="num">Стоимость</th>
-                  <th className="num">P&L</th><th className="num">P&L %</th>
+                  <th className="num">P&L</th><th className="num">P&L %</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -180,6 +214,11 @@ export function AccountPage() {
                     <td className="num">{num(p.marketValue)}</td>
                     <td className="num" style={{ color: changeColor(p.unrealizedPnl) }}>{num(p.unrealizedPnl)}</td>
                     <td className="num" style={{ color: changeColor(p.unrealizedPnl) }}>{pct(p.unrealizedPct)}</td>
+                    <td className="num">
+                      <button className="btn-secondary btn-sell" onClick={() => sellPosition(p)}>
+                        Продать
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -219,7 +258,7 @@ export function AccountPage() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Дата</th><th>Бумага</th><th>Название</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
+                  <tr><th>Дата</th><th>Бумага</th><th>Название</th><th>Тип</th><th className="num">К выплате</th><th className="num">На руки</th></tr>
                 </thead>
                 <tbody>
                   {(allIncome ? income : income.slice(0, COLLAPSED_ROWS)).map((e, i) => (
@@ -316,9 +355,14 @@ export function AccountPage() {
 
       <CashPanel accountId={id} balance={s?.cashBalance} />
 
-      <section className="panel">
-        <h2>Добавить сделку</h2>
-        <AddTransactionForm accountId={id} />
+      <section className="panel" ref={tradeRef}>
+        <h2>{trade.side === "SELL" ? "Продать бумагу" : "Добавить сделку"}</h2>
+        <AddTransactionForm
+          accountId={id}
+          defaultSecId={trade.secId}
+          defaultQuantity={trade.quantity}
+          side={trade.side}
+        />
       </section>
 
       <section className="panel">

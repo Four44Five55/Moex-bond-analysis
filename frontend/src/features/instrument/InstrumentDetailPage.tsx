@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { instrumentsApi } from "../../shared/api/endpoints";
 import type { DividendInfo, Instrument, InstrumentPayment } from "../../shared/api/types";
+import type { TradeSide } from "../portfolio/types";
 import { num, pct, compact, date, daysUntil, reliabilityColor, changeColor } from "../../shared/lib/format";
 import { PriceChart } from "./PriceChart";
 import { PaymentsChart } from "./PaymentsChart";
@@ -131,6 +132,8 @@ export function InstrumentDetailPage() {
     enabled: !!secId,
   });
   const [allPayments, setAllPayments] = useState(false);
+  const [tradeSide, setTradeSide] = useState<TradeSide>("BUY");
+  const tradeRef = useRef<HTMLDivElement>(null);
   const performance = useQuery({
     queryKey: ["performance", secId],
     queryFn: () => instrumentsApi.performance(secId),
@@ -141,6 +144,12 @@ export function InstrumentDetailPage() {
     queryFn: () => instrumentsApi.dividendYield(secId),
     enabled: !!secId && detail.data?.type === "SHARE",
   });
+
+  // Сторона сделки задаётся кнопкой у названия; панель ввода живёт внизу страницы
+  const openTrade = (side: TradeSide) => {
+    setTradeSide(side);
+    tradeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   if (detail.isLoading) return <div className="loading">Загрузка…</div>;
   if (detail.isError) return <div className="error">⚠ {(detail.error as Error).message}</div>;
@@ -156,6 +165,10 @@ export function InstrumentDetailPage() {
             <button className={isWatched(i.secId) ? "star-btn on" : "star-btn"} onClick={() => toggle(i.secId)}>
               ★
             </button>
+            {/* Сделка — самое частое действие на карточке, поэтому кнопки стоят у названия,
+                а не под метриками: форма ниже открывается уже с нужной стороной сделки */}
+            <button className="btn-primary btn-trade" onClick={() => openTrade("BUY")}>Купить</button>
+            <button className="btn-secondary btn-trade" onClick={() => openTrade("SELL")}>Продать</button>
           </div>
           <div className="detail-sub">
             {i.secId} · {i.isin ?? "—"} · {i.fullName ?? ""}
@@ -287,7 +300,9 @@ export function InstrumentDetailPage() {
         )}
       </section>
 
-      <AddToPortfolioPanel secId={i.secId} price={i.lastPrice ?? undefined} />
+      <div ref={tradeRef}>
+        <AddToPortfolioPanel secId={i.secId} price={i.lastPrice ?? undefined} side={tradeSide} />
+      </div>
     </div>
   );
 }

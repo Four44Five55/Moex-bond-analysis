@@ -11,6 +11,9 @@ interface Props {
   accountId: number;
   defaultSecId?: string;
   defaultPrice?: number;
+  /** Сторона сделки снаружи — кнопкой «Купить»/«Продать»; внутри её всё равно можно переключить. */
+  side?: TradeSide;
+  defaultQuantity?: number;
   onDone?: () => void;
 }
 
@@ -23,12 +26,24 @@ function minusDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice, onDone }: Props) {
+export function AddTransactionForm({
+  accountId,
+  defaultSecId = "",
+  defaultPrice,
+  side: sideProp = "BUY",
+  defaultQuantity = 1,
+  onDone,
+}: Props) {
   const qc = useQueryClient();
   const [secId, setSecId] = useState(defaultSecId);
-  const [side, setSide] = useState<TradeSide>("BUY");
+  const [side, setSide] = useState<TradeSide>(sideProp);
   const [tradeDate, setTradeDate] = useState(new Date().toISOString().slice(0, 10));
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState(defaultQuantity);
+
+  // Кнопка «Купить»/«Продать» снаружи переключает сторону уже открытой формы
+  useEffect(() => setSide(sideProp), [sideProp]);
+  useEffect(() => setQuantity(defaultQuantity), [defaultQuantity]);
+  useEffect(() => setSecId(defaultSecId), [defaultSecId]);
   const [price, setPrice] = useState(defaultPrice ?? 0);
   const [aci, setAci] = useState(0);
 

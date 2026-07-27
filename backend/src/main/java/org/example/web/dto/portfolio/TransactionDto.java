@@ -5,9 +5,14 @@ import org.example.domain.model.Transaction;
 
 import java.time.LocalDate;
 
+/**
+ * @param secName краткое название бумаги; {@code null}, если инструмента уже нет в справочнике —
+ *                сделка от этого не перестаёт существовать
+ */
 public record TransactionDto(
         Long id,
         String secId,
+        String secName,
         TradeSide side,
         LocalDate tradeDate,
         double quantity,
@@ -16,8 +21,8 @@ public record TransactionDto(
         double commission,
         String note
 ) {
-    public static TransactionDto from(Transaction t) {
-        return new TransactionDto(t.getId(), t.getSecId(), t.getSide(), t.getTradeDate(),
+    public static TransactionDto from(Transaction t, String secName) {
+        return new TransactionDto(t.getId(), t.getSecId(), secName, t.getSide(), t.getTradeDate(),
                 t.getQuantity(), t.getPrice(), t.getAci(), t.getCommission(), t.getNote());
     }
 }

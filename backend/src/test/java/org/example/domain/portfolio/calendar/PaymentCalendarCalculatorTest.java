@@ -82,6 +82,33 @@ class PaymentCalendarCalculatorTest {
     }
 
     @Test
+    void amortizationCountsAsIncomingMoneyButNotAsIncome() {
+        // Возврат номинала легко больше самих купонов — свести их в одну строку «доход» нельзя
+        PaymentCalendar calendar = calculator.build(List.of(
+                coupon("2026-08-05", 100),
+                new PaymentCalendarEntry(LocalDate.parse("2026-08-05"), IncomeKind.AMORTIZATION,
+                        5000, 5000)), START, 3);
+
+        assertThat(calendar.totalGross()).isCloseTo(5100.0, TOLERANCE);
+        assertThat(calendar.principalReturn()).isCloseTo(5000.0, TOLERANCE);
+        assertThat(calendar.incomeGross()).isCloseTo(100.0, TOLERANCE);
+    }
+
+    @Test
+    void totalsByKindCoverTheWholeHorizon() {
+        PaymentCalendar calendar = calculator.build(List.of(
+                coupon("2026-08-05", 100),
+                coupon("2026-10-05", 120),
+                new PaymentCalendarEntry(LocalDate.parse("2026-09-01"), IncomeKind.DIVIDEND, 300, 261)),
+                START, 3);
+
+        assertThat(calendar.totalByKind()).extracting(PaymentKindSlice::kind)
+                .containsExactly(IncomeKind.COUPON, IncomeKind.DIVIDEND);
+        assertThat(calendar.totalByKind().get(0).gross()).isCloseTo(220.0, TOLERANCE);
+        assertThat(calendar.principalReturn()).isZero();
+    }
+
+    @Test
     void emptyHorizonGivesEmptyCalendar() {
         PaymentCalendar calendar = calculator.build(List.of(coupon("2026-08-05", 100)), START, 0);
 

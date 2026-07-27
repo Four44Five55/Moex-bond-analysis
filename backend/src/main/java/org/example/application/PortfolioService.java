@@ -274,8 +274,10 @@ public class PortfolioService {
             totals.tax += computeTax(account, s.realizedSales(), annual).totalTax();
             totals.positions += s.positions().size();
 
-            double accountCash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome);
+            double accountCash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome,
+                    depositsFundedFrom(deposits, account.getId()));
             totals.cashBalance += accountCash;
+            totals.addExternal(externalIn(s.cashMovements()), !s.transactions().isEmpty());
 
             lines.add(toAccountLine(account, s, accountInvested, accountValue, accountCash));
             // В разрезе по счетам показываем весь капитал счёта, включая непристроенные деньги
@@ -300,6 +302,11 @@ public class PortfolioService {
             }
             upcoming.addAll(upcomingInterest(deposit, today));
             flows.addAll(depositFlows(deposit, today));
+            // Вклад с указанным счётом-источником открыт деньгами, которые уже посчитаны
+            // пополнением этого счёта; внесённым извне считается только вклад со стороны
+            if (deposit.getSourceAccountId() == null) {
+                totals.addExternal(deposit.getPrincipal(), true);
+            }
         }
 
         if (totals.cashBalance > 0) {
@@ -316,7 +323,7 @@ public class PortfolioService {
         Double xirr = xirrCalculator.compute(flows);
         upcoming.sort(Comparator.comparing(IncomeEventDto::date));
 
-        return new ConsolidatedOverviewDto(totals.toDto(), lines,
+        return new ConsolidatedOverviewDto(totals.toDto(grandTotal), lines,
                 toSlices(accountHoldings), toSlices(typeHoldings), upcoming,
                 xirr == null ? null : xirr * 100.0,
                 depositService.list(clientId), depositsValue, grandTotal,
@@ -370,8 +377,8 @@ public class PortfolioService {
 
         return new PaymentCalendarDto(
                 calendar.months().stream().map(PortfolioService::toMonthDto).toList(),
-                calendar.totalGross(), calendar.totalNet(), calendar.averageMonthlyNet(),
-                payments, horizon);
+                calendar.totalGross(), calendar.incomeGross(), calendar.principalReturn(),
+                calendar.totalNet(), calendar.averageMonthlyNet(), payments, horizon);
     }
 
     private static CalendarMonthDto toMonthDto(PaymentCalendarMonth m) {
@@ -402,10 +409,17 @@ public class PortfolioService {
      * У капитализируемого вклада выплат нет вовсе: проценты не покидают вклад и уже сидят
      * в его текущей стоимости, которая войдёт в завершающий поток. Учесть их ещё и потоком —
      * значит посчитать один и тот же доход дважды.
+     * <p>
+     * Тело вклада становится потоком, только если вклад открыт деньгами со стороны. Перевод
+     * с брокерского счёта капиталом не является: те деньги уже вошли в потоки пополнением счёта,
+     * а со счёта они ушли через {@link #freeCash} — иначе одна и та же сумма вычлась бы дважды
+     * и доходность провалилась бы на ровном месте.
      */
     private List<CashFlow> depositFlows(Deposit deposit, LocalDate today) {
         List<CashFlow> flows = new ArrayList<>();
-        flows.add(new CashFlow(deposit.getOpenedOn(), -deposit.getPrincipal()));
+        if (deposit.getSourceAccountId() == null) {
+            flows.add(new CashFlow(deposit.getOpenedOn(), -deposit.getPrincipal()));
+        }
         if (!deposit.isCapitalized()) {
             depositCalculator.payouts(deposit).stream()
                     .filter(a -> !a.date().isAfter(today))
@@ -438,13 +452,33 @@ public class PortfolioService {
         private double projectedIncome;
         private double tax;
         private int positions;
+        private double externalIn;
+        /** Хоть один счёт с бумагами, но без учёта денег — и общая сумма внесённого уже не сумма. */
+        private boolean externalComplete = true;
+
+        /**
+         * @param amount   внесено по этому источнику; {@code null} — учёт не ведётся
+         * @param hasMoney есть ли по источнику вообще что считать: пустой счёт без сделок
+         *                 и без движений итог не портит
+         */
+        private void addExternal(Double amount, boolean hasMoney) {
+            if (amount != null) {
+                externalIn += amount;
+            } else if (hasMoney) {
+                externalComplete = false;
+            }
+        }
 
         private double totalValue() {
             return marketValue + cashBalance;
         }
 
-        private PortfolioSummaryDto toDto() {
+        /** @param grandTotal весь капитал клиента вместе с вкладами — прибыль считается от него */
+        private PortfolioSummaryDto toDto(double grandTotal) {
+            Double external = externalComplete ? externalIn : null;
+            Double profit = external == null ? null : grandTotal - external;
             return new PortfolioSummaryDto(invested, marketValue, cashBalance, totalValue(),
+                    external, profit,
                     marketValue - invested, realizedPnl,
                     commission, receivedIncome, projectedIncome, tax, positions);
         }
@@ -502,7 +536,7 @@ public class PortfolioService {
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
         double positionsValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
         double terminal = positionsValue + freeCash(movements, pricedTrades(txns, instruments),
-                realizedIncomeEvents(txns, instruments));
+                realizedIncomeEvents(txns, instruments), fundedDeposits(account));
         Double xirr = computeXirr(capitalFlows(txns, instruments, movements), terminal, to);
 
         return new PortfolioHistoryDto(
@@ -593,12 +627,33 @@ public class PortfolioService {
     /**
      * Свободные деньги счёта — или 0, если учёт денег по счёту не ведётся
      * (см. {@link CashBalanceCalculator#reportedBalance}).
+     *
+     * @param fundedDeposits тело вкладов, открытых деньгами этого счёта: они со счёта ушли
+     *                       и теперь лежат во вкладе, где их и показывает сводка
      */
     private double freeCash(List<CashMovement> movements, List<PricedTrade> trades,
-                            List<IncomeEvent> receivedIncome) {
+                            List<IncomeEvent> receivedIncome, double fundedDeposits) {
         double externalNet = movements.stream().mapToDouble(CashMovement::signedAmount).sum();
         double received = receivedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-        return cashBalanceCalculator.reportedBalance(!movements.isEmpty(), externalNet, trades, received);
+        double balance = cashBalanceCalculator
+                .reportedBalance(!movements.isEmpty(), externalNet, trades, received);
+        return movements.isEmpty() ? balance : balance - fundedDeposits;
+    }
+
+    /**
+     * Тело вкладов, открытых деньгами этого счёта. Отдельный запрос — вклады привязаны к клиенту,
+     * а не к счёту, и в снапшот счёта они не попадают.
+     */
+    private double fundedDeposits(Account account) {
+        return depositsFundedFrom(depositService.entities(account.getClientId()), account.getId());
+    }
+
+    /** Тело вкладов, открытых деньгами конкретного счёта. */
+    private static double depositsFundedFrom(List<Deposit> deposits, Long accountId) {
+        return deposits.stream()
+                .filter(d -> accountId.equals(d.getSourceAccountId()))
+                .mapToDouble(Deposit::getPrincipal)
+                .sum();
     }
 
     private List<PricedTrade> pricedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
@@ -647,12 +702,36 @@ public class PortfolioService {
         double marketValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
         double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
         double receivedIncome = realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-        double cash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome);
+        double cash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome,
+                fundedDeposits(s.account()));
+        double totalValue = marketValue + cash;
 
-        return new PortfolioSummaryDto(invested, marketValue, cash, marketValue + cash,
+        Double externalIn = externalIn(s.cashMovements());
+        return new PortfolioSummaryDto(invested, marketValue, cash, totalValue,
+                externalIn, profitOver(totalValue, externalIn),
                 marketValue - invested, realized,
                 s.totalCommission(), receivedIncome, annual[0] + annual[1], estimatedTax,
                 s.positions().size());
+    }
+
+    /**
+     * Внесено извне: пополнения минус выводы. {@code null}, если движений нет вовсе — тогда
+     * неизвестно не «ноль», а именно «неизвестно», и прибыль от такой базы считать нельзя.
+     */
+    private static Double externalIn(List<CashMovement> movements) {
+        return movements.isEmpty() ? null
+                : movements.stream().mapToDouble(CashMovement::signedAmount).sum();
+    }
+
+    /**
+     * Заработано за всё время = капитал сейчас − внесено извне.
+     * <p>
+     * Единственный способ сложить рост цены, полученные выплаты и результат продаж, не считая
+     * ничего дважды: реинвестированный купон уже сидит и в себестоимости позиций, и в их
+     * рыночной стоимости, поэтому «вложено + получено» капиталом не является.
+     */
+    private static Double profitOver(double totalValue, Double externalIn) {
+        return externalIn == null ? null : totalValue - externalIn;
     }
 
     // --- Ядро расчёта ---

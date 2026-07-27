@@ -33,7 +33,7 @@ public record ConsolidatedOverviewDto(
 
     public static ConsolidatedOverviewDto empty() {
         return new ConsolidatedOverviewDto(
-                new PortfolioSummaryDto(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                new PortfolioSummaryDto(0, 0, 0, 0, null, null, 0, 0, 0, 0, 0, 0, 0),
                 List.of(), List.of(), List.of(), List.of(), null,
                 List.of(), 0, 0, DepositTaxBreakdown.zero());
     }

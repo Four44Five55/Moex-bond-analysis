@@ -35,21 +35,20 @@ public class PaymentCalendarCalculator {
             buckets.put(from.plusMonths(i), new Bucket());
         }
 
-        double totalGross = 0;
-        double totalNet = 0;
+        Bucket horizon = new Bucket();
         for (PaymentCalendarEntry e : entries) {
             Bucket bucket = buckets.get(YearMonth.from(e.date()));
             if (bucket == null) {
                 continue; // выплата вне горизонта — календарь её не показывает и в итог не берёт
             }
             bucket.add(e);
-            totalGross += e.gross();
-            totalNet += e.net();
+            horizon.add(e);
         }
 
         List<PaymentCalendarMonth> result = new ArrayList<>(months);
         buckets.forEach((month, bucket) -> result.add(bucket.toMonth(month)));
-        return new PaymentCalendar(List.copyOf(result), totalGross, totalNet, totalNet / months);
+        return new PaymentCalendar(List.copyOf(result), horizon.gross, horizon.net,
+                horizon.net / months, horizon.slices(), horizon.principalReturn());
     }
 
     private static final class Bucket {
@@ -69,10 +68,19 @@ public class PaymentCalendarCalculator {
         }
 
         private PaymentCalendarMonth toMonth(YearMonth month) {
-            List<PaymentKindSlice> slices = byKind.entrySet().stream()
+            return new PaymentCalendarMonth(month, gross, net, count, slices());
+        }
+
+        private List<PaymentKindSlice> slices() {
+            return byKind.entrySet().stream()
                     .map(en -> new PaymentKindSlice(en.getKey(), en.getValue()[0], en.getValue()[1]))
                     .toList();
-            return new PaymentCalendarMonth(month, gross, net, count, slices);
+        }
+
+        /** Амортизация — возврат тела долга, а не доход: в календаре она есть, в доходе её быть не должно. */
+        private double principalReturn() {
+            double[] sums = byKind.get(IncomeKind.AMORTIZATION);
+            return sums == null ? 0.0 : sums[0];
         }
     }
 }

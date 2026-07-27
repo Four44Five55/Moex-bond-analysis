@@ -78,12 +78,17 @@ export interface CashMovementRequest {
 }
 
 export interface PortfolioSummary {
+  /** Себестоимость открытых позиций — включая купленное на реинвестированные выплаты. */
   invested: number;
   marketValue: number;
-  /** Свободные деньги; отрицательные — если сделки заведены, а пополнения нет. */
+  /** Свободные деньги; ноль, если движения денег не заведены. */
   cashBalance: number;
   /** Бумаги по рынку плюс свободные деньги. */
   totalValue: number;
+  /** Внесено извне: пополнения − выводы (+ тело вкладов в сводке). null — учёт не ведётся. */
+  externalIn: number | null;
+  /** Заработано за всё время = капитал − внесённое. null, если внесённое неизвестно. */
+  totalProfit: number | null;
   unrealizedPnl: number;
   realizedPnl: number;
   totalCommission: number;
@@ -158,6 +163,9 @@ export interface Deposit {
   totalInterest: number;
   nextPayoutOn: string | null;
   matured: boolean;
+  /** Счёт, с которого сняты деньги; null — вклад открыт деньгами со стороны. */
+  sourceAccountId: number | null;
+  sourceAccountName: string | null;
 }
 
 export interface DepositRequest {
@@ -169,6 +177,8 @@ export interface DepositRequest {
   capitalized: boolean;
   payoutPeriod: PayoutPeriod;
   note?: string | null;
+  /** Счёт-источник денег; null — вклад открыт деньгами со стороны. */
+  sourceAccountId?: number | null;
 }
 
 /** Налог с процентов по вкладам: вычет один на все вклады клиента, а не на каждый. */
@@ -234,7 +244,12 @@ export interface CalendarMonth {
 /** Календарь выплат по всему капиталу: помесячные суммы плюс сами выплаты за горизонт. */
 export interface PaymentCalendar {
   months: CalendarMonth[];
+  /** Всё, что поступит за горизонт: прогноз будущих выплат, а не начисленное. */
   totalGross: number;
+  /** Из него доход — без возврата номинала по амортизациям. */
+  incomeGross: number;
+  /** Возврат вложенного номинала: деньги придут, но доходом не являются. */
+  principalReturn: number;
   totalNet: number;
   /** «На руки» в среднем за месяц: делится на весь горизонт, включая пустые месяцы. */
   averageMonthlyNet: number;

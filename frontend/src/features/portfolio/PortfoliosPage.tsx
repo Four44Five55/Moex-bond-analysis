@@ -56,17 +56,25 @@ export function PortfoliosPage() {
   // Строки счетов из сводки несут суммы; список счетов — источник правды по составу и порядку
   const lineById = new Map((o?.accounts ?? []).map((a) => [a.id, a]));
 
+  // Три величины подряд, которые нельзя складывать: внесённое → капитал → разница между ними.
+  // Всё остальное — расшифровка того, из чего капитал состоит и откуда взялась прибыль.
   const cards = [
+    { label: "Внесено своих денег", value: num(t?.externalIn) },
     { label: "Всего капитала", value: num(o?.grandTotal) },
+    {
+      label: "Заработано за всё время",
+      value: num(t?.totalProfit),
+      color: changeColor(t?.totalProfit),
+    },
+    { label: "Доходность (XIRR)", value: pct(o?.xirrPct), color: changeColor(o?.xirrPct) },
     { label: "Бумаги по рынку", value: num(t?.marketValue) },
     { label: "Вклады", value: num(o?.depositsValue) },
     { label: "Свободные деньги", value: num(t?.cashBalance), color: changeColor(t?.cashBalance) },
     {
-      label: "Нереализованный P&L",
+      label: "Переоценка бумаг",
       value: num(t?.unrealizedPnl),
       color: changeColor(t?.unrealizedPnl),
     },
-    { label: "Доходность (XIRR)", value: pct(o?.xirrPct), color: changeColor(o?.xirrPct) },
     { label: "Получено выплат", value: num(t?.receivedIncome) },
     { label: "Прогноз дохода (12 мес)", value: num(t?.projectedAnnualIncome) },
     { label: "Оценка налога", value: num(t?.estimatedTax) },
@@ -93,6 +101,21 @@ export function PortfoliosPage() {
             ))}
           </div>
 
+          <div className="hint">
+            {t.externalIn == null ? (
+              <>
+                «Внесено своих денег» не посчитать: хотя бы по одному счёту со сделками нет
+                движений денег. Заведите пополнения — появится и внесённое, и заработанное.
+              </>
+            ) : (
+              <>
+                Заработано = капитал − внесённое, и это единственная строка, которую можно читать
+                как итог. «Получено выплат» складывать с капиталом нельзя: реинвестированные
+                выплаты уже превратились в бумаги и сидят в их стоимости.
+              </>
+            )}
+          </div>
+
           <div className="two-col">
             <section className="panel">
               <h2>Капитал по счетам</h2>
@@ -109,7 +132,7 @@ export function PortfoliosPage() {
         </>
       )}
 
-      <DepositsPanel deposits={o?.deposits ?? []} tax={o?.depositTax} />
+      <DepositsPanel deposits={o?.deposits ?? []} tax={o?.depositTax} accounts={list} />
 
       <section className="panel">
         <h2>Мои счета</h2>

@@ -360,6 +360,10 @@ tbody tr:hover { background: var(--panel-2); }
 
 .table-more { margin-top: 10px; }
 
+/* Кнопки сделки: у названия бумаги и в строке позиции */
+.btn-trade { padding: 6px 14px; font-size: 13px; }
+.btn-sell { padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+
 /* Поле даты: текст «дд.мм.гг» плюс кнопка календаря; нативный инпут скрыт и нужен только ему */
 .date-field { display: inline-flex; align-items: stretch; gap: 6px; position: relative; }
 .date-field input[type="text"] { width: 110px; font-variant-numeric: tabular-nums; }
