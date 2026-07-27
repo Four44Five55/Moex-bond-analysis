@@ -11,8 +11,11 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Чистый прогнозатор доходов по позиции: купоны/амортизации точно по графику;
- * дивиденды — по анонсированной будущей выплате, иначе оценка по последней (год вперёд).
+ * Чистый прогнозатор доходов по позиции: купоны и амортизации по графику биржи,
+ * дивиденды — только по объявленной выплате.
+ * <p>
+ * Купон приходит сюда уже достроенным ({@code CouponScheduleEstimator}): у флоатера будущие
+ * периоды не зафиксированы, и такие события помечаются {@link IncomeEvent#estimate()}.
  */
 @Component
 public class IncomeForecaster {
@@ -24,7 +27,9 @@ public class IncomeForecaster {
         List<IncomeEvent> events = new ArrayList<>();
         for (CouponPayment c : coupons) {
             if (!c.date().isBefore(from)) {
-                events.add(new IncomeEvent(c.date(), secId, IncomeKind.COUPON, c.perBond() * quantity, false));
+                // Незафиксированный купон флоатера доходит сюда оценкой и таким же должен показаться
+                events.add(new IncomeEvent(c.date(), secId, IncomeKind.COUPON,
+                        c.perBond() * quantity, c.estimated()));
             }
         }
         for (AmortizationPayment a : amortizations) {

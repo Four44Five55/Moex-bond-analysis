@@ -1,5 +1,6 @@
 import { API_BASE, apiGet, apiGetWithClient, apiPost, apiDelete } from "./client";
 import type {
+  AccruedInterest,
   Candle,
   DividendInfo,
   Instrument,
@@ -47,6 +48,12 @@ export const instrumentsApi = {
 
   payments: (secId: string) =>
     apiGet<InstrumentPayment[]>(`/instruments/${encodeURIComponent(secId)}/payments`),
+
+  /** НКД облигации на дату сделки — для подстановки в форму; у акции вернётся bond: false. */
+  accruedInterest: (secId: string, date: string) =>
+    apiGet<AccruedInterest>(
+      `/instruments/${encodeURIComponent(secId)}/accrued-interest?date=${date}`
+    ),
 
   performance: (secId: string) =>
     apiGet<InstrumentPerformance>(`/instruments/${encodeURIComponent(secId)}/performance`),

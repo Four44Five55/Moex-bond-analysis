@@ -5,6 +5,7 @@ import org.example.application.InstrumentService;
 import org.example.application.SyncService;
 import org.example.domain.filter.FilterCriteria;
 import org.example.domain.model.InstrumentType;
+import org.example.web.dto.AccruedInterestDto;
 import org.example.web.dto.CandleDto;
 import org.example.web.dto.DividendInfoDto;
 import org.example.web.dto.InstrumentDto;
@@ -101,6 +102,18 @@ public class InstrumentController {
     @GetMapping("/{secId}/payments")
     public List<InstrumentPaymentDto> payments(@PathVariable String secId) {
         return instrumentService.payments(secId);
+    }
+
+    /**
+     * НКД облигации на дату сделки — для подстановки в форму ввода. За прошедшую дату берётся
+     * из истории торгов MOEX: рассчитать его нельзя, у флоатеров ставка периода не зафиксирована.
+     */
+    @GetMapping("/{secId}/accrued-interest")
+    public AccruedInterestDto accruedInterest(
+            @PathVariable String secId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date
+    ) {
+        return instrumentService.accruedInterest(secId, date != null ? date : LocalDate.now());
     }
 
     /** Доходности за периоды (1Д/1Н/1М/1Г/YTD) и 52-недельный диапазон цен. */

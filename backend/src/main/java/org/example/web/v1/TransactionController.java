@@ -2,6 +2,7 @@ package org.example.web.v1;
 
 import jakarta.validation.Valid;
 import org.example.application.TransactionService;
+import org.example.web.dto.portfolio.AciBackfillDto;
 import org.example.web.dto.portfolio.AddTransactionRequest;
 import org.example.web.dto.portfolio.TransactionDto;
 import org.springframework.http.ResponseEntity;
@@ -24,14 +25,26 @@ public class TransactionController {
     @GetMapping
     public List<TransactionDto> list(@RequestHeader(CLIENT) String clientId,
                                      @PathVariable Long accountId) {
-        return transactionService.list(clientId, accountId).stream().map(TransactionDto::from).toList();
+        return transactionService.list(clientId, accountId);
     }
 
     @PostMapping
     public TransactionDto add(@RequestHeader(CLIENT) String clientId,
                               @PathVariable Long accountId,
                               @Valid @RequestBody AddTransactionRequest req) {
-        return TransactionDto.from(transactionService.add(clientId, accountId, req));
+        return transactionService.add(clientId, accountId, req);
+    }
+
+    /**
+     * Дозаполнить НКД в сделках по облигациям, заведённых до появления автоподстановки.
+     * По умолчанию — примерка: возвращает, что изменится, не сохраняя. Запись включается
+     * явным {@code dryRun=false}, потому что НКД меняет себестоимость, налог и остаток денег.
+     */
+    @PostMapping("/backfill-aci")
+    public AciBackfillDto backfillAci(@RequestHeader(CLIENT) String clientId,
+                                      @PathVariable Long accountId,
+                                      @RequestParam(defaultValue = "true") boolean dryRun) {
+        return transactionService.backfillAccruedInterest(clientId, accountId, dryRun);
     }
 
     @DeleteMapping("/{txId}")

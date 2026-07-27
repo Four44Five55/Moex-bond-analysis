@@ -39,16 +39,21 @@ class RedisConfigTest {
     @Test
     void restoresPaymentsList() {
         List<InstrumentPaymentDto> payments = List.of(
-                new InstrumentPaymentDto(LocalDate.of(2025, 7, 15), "COUPON", 34.9, "RUB", 3.56),
+                new InstrumentPaymentDto(LocalDate.of(2025, 7, 15), "COUPON", 34.9, "RUB", 3.56, false),
+                // Оценочный купон флоатера: флаг должен пережить сериализацию, иначе из кеша
+                // оценка вернётся неотличимой от объявленной биржей суммы
+                new InstrumentPaymentDto(LocalDate.of(2026, 1, 15), "COUPON", 41.2, "RUB", 4.1, true),
                 // null-доля тоже должна пережить сериализацию: цены у бумаги может не быть
-                new InstrumentPaymentDto(LocalDate.of(2025, 1, 15), "AMORTIZATION", 1000.0, "RUB", null));
+                new InstrumentPaymentDto(LocalDate.of(2025, 1, 15), "AMORTIZATION", 1000.0, "RUB", null, false));
 
         assertThat(roundTrip(payments)).isEqualTo(payments);
     }
 
     @Test
     void restoresCorporateActionsFromDomain() {
-        List<CouponPayment> coupons = List.of(new CouponPayment(LocalDate.of(2026, 2, 1), 41.5));
+        List<CouponPayment> coupons = List.of(
+                new CouponPayment(LocalDate.of(2026, 2, 1), 41.5),
+                new CouponPayment(LocalDate.of(2026, 5, 1), 41.5, true));
 
         assertThat(roundTrip(coupons)).isEqualTo(coupons);
     }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# MOEX Analytics — остановка приложения (backend + frontend + инфраструктура)
+# MOEX Analytexportics — остановка приложения (backend + frontend + инфраструктура)
 set -uo pipefail
-
+gh
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 

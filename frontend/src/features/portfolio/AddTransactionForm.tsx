@@ -5,6 +5,7 @@ import { portfolioApi } from "./api";
 import { instrumentsApi } from "../../shared/api/endpoints";
 import type { AddTransactionRequest, TradeSide } from "./types";
 import { InstrumentPicker } from "../instruments/InstrumentPicker";
+import { DateField } from "../../shared/ui/DateField";
 
 interface Props {
   accountId: number;
@@ -46,6 +47,23 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
     }
   }, [priceQuery.data]);
 
+  // НКД на дату сделки: считать его самим нельзя — у флоатеров ставка периода не зафиксирована,
+  // поэтому берём у биржи. Для акции ответ придёт с bond: false, и поле не показывается.
+  const aciQuery = useQuery({
+    queryKey: ["trade-aci", secId, tradeDate],
+    queryFn: () => instrumentsApi.accruedInterest(secId, tradeDate),
+    enabled: isSecId(secId) && !!tradeDate,
+  });
+
+  useEffect(() => {
+    const known = aciQuery.data;
+    if (known?.bond && known.aci != null) {
+      setAci(Number(known.aci.toFixed(2)));
+    } else if (known && !known.bond) {
+      setAci(0);
+    }
+  }, [aciQuery.data]);
+
   const mutation = useMutation({
     mutationFn: (req: AddTransactionRequest) => portfolioApi.addTransaction(accountId, req),
     onSuccess: () => {
@@ -62,6 +80,17 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
 
   const noCandle = isSecId(secId) && priceQuery.isSuccess && (priceQuery.data?.length ?? 0) === 0;
 
+  // Пока про бумагу ничего не известно, поле НКД показываем: скрыть его стоит, только когда
+  // биржа ответила, что это акция
+  const isBond = aciQuery.data?.bond ?? true;
+  const aciHint = aciQuery.isFetching
+    ? "загружаю НКД на дату…"
+    : aciQuery.data?.aci == null
+      ? "не удалось определить — впишите вручную"
+      : aciQuery.data.quotedOn === tradeDate
+        ? "НКД на дату сделки"
+        : `НКД на ${aciQuery.data.quotedOn} — ближайший торговый день`;
+
   return (
     <form className="txn-form" onSubmit={submit}>
       <label>
@@ -77,7 +106,7 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
       </label>
       <label>
         Дата
-        <input type="date" value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
+        <DateField value={tradeDate} onChange={setTradeDate} />
       </label>
       <label>
         Кол-во
@@ -90,10 +119,13 @@ export function AddTransactionForm({ accountId, defaultSecId = "", defaultPrice,
           {priceQuery.isFetching ? "загружаю цену на дату…" : noCandle ? "нет котировок на дату — впишите вручную" : "закрытие на дату сделки"}
         </span>
       </label>
-      <label>
-        НКД
-        <input type="number" min="0" step="any" value={aci} onChange={(e) => setAci(Number(e.target.value))} />
-      </label>
+      {isBond && (
+        <label>
+          НКД
+          <input type="number" min="0" step="any" value={aci} onChange={(e) => setAci(Number(e.target.value))} />
+          <span className="field-hint">{aciHint}</span>
+        </label>
+      )}
       <button className="btn-primary" type="submit" disabled={mutation.isPending}>
         {mutation.isPending ? "…" : "Добавить"}
       </button>

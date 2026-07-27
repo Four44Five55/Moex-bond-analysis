@@ -10,15 +10,18 @@ import org.example.domain.analysis.ReturnsCalculator;
 import org.example.domain.filter.BondSpecifications;
 import org.example.domain.filter.FilterCriteria;
 import org.example.domain.filter.ShareSpecifications;
+import org.example.domain.model.AccruedInterest;
 import org.example.domain.model.Bond;
 import org.example.domain.model.Instrument;
 import org.example.domain.model.InstrumentType;
 import org.example.domain.model.DividendPayment;
 import org.example.domain.model.Share;
+import org.example.domain.port.BondHistoryProvider;
 import org.example.domain.port.CorporateActionsProvider;
 import org.example.infrastructure.persistence.BondRepository;
 import org.example.infrastructure.persistence.InstrumentRepository;
 import org.example.infrastructure.persistence.ShareRepository;
+import org.example.web.dto.AccruedInterestDto;
 import org.example.web.dto.DividendInfoDto;
 import org.example.web.dto.InstrumentDto;
 import org.example.web.dto.InstrumentPaymentDto;
@@ -65,6 +68,7 @@ public class InstrumentService {
     private final InstrumentRepository instrumentRepository;
     private final BondAnalyzer bondAnalyzer;
     private final CorporateActionsProvider corporateActions;
+    private final BondHistoryProvider bondHistory;
     private final CandleService candleService;
     private final ReturnsCalculator returnsCalculator;
     private final DividendYieldCalculator dividendYieldCalculator;
@@ -74,6 +78,7 @@ public class InstrumentService {
                              InstrumentRepository instrumentRepository,
                              BondAnalyzer bondAnalyzer,
                              CorporateActionsProvider corporateActions,
+                             BondHistoryProvider bondHistory,
                              CandleService candleService,
                              ReturnsCalculator returnsCalculator,
                              DividendYieldCalculator dividendYieldCalculator) {
@@ -82,9 +87,41 @@ public class InstrumentService {
         this.instrumentRepository = instrumentRepository;
         this.bondAnalyzer = bondAnalyzer;
         this.corporateActions = corporateActions;
+        this.bondHistory = bondHistory;
         this.candleService = candleService;
         this.returnsCalculator = returnsCalculator;
         this.dividendYieldCalculator = dividendYieldCalculator;
+    }
+
+    /**
+     * НКД на одну облигацию на дату сделки — то, что подставляется в форму ввода.
+     * <p>
+     * За сегодня берётся значение из справочника: оно уже загружено синхронизацией, и ходить
+     * за ним в историю торгов незачем — там сегодняшней сессии может ещё не быть. За прошедшую
+     * дату спрашиваем историю: рассчитать НКД самим нельзя, у флоатеров ставка будущих периодов
+     * не зафиксирована, а биржа НКД считает по каждому торговому дню.
+     * <p>
+     * Недоступность MOEX не должна ломать ввод сделки: возвращаем «неизвестно» и даём вписать руками.
+     */
+    public AccruedInterestDto accruedInterest(String secId, LocalDate date) {
+        Instrument inst = instrumentRepository.findBySecId(secId)
+                .orElseThrow(() -> new NotFoundException("Инструмент не найден: " + secId));
+        if (!(inst instanceof Bond bond)) {
+            return AccruedInterestDto.notABond(secId, date);
+        }
+        LocalDate today = LocalDate.now();
+        if (!date.isBefore(today)) {
+            return new AccruedInterestDto(secId, date, true, bond.getAccruedInterest(), today);
+        }
+        try {
+            AccruedInterest history = bondHistory.accruedInterestOn(secId, date);
+            return history.known()
+                    ? new AccruedInterestDto(secId, date, true, history.perBond(), history.tradeDate())
+                    : AccruedInterestDto.unknown(secId, date);
+        } catch (RuntimeException e) {
+            log.warn("НКД по {} на {} недоступен: {}", secId, date, e.getMessage());
+            return AccruedInterestDto.unknown(secId, date);
+        }
     }
 
     /** История выплат инструмента из MOEX: купоны/амортизации (облигация) или дивиденды (акция), новые сверху. */
@@ -98,12 +135,12 @@ public class InstrumentService {
         try {
             if (inst instanceof Bond) {
                 corporateActions.coupons(secId).forEach(c ->
-                        payouts.add(new Payout(c.date(), "COUPON", c.perBond(), "RUB")));
+                        payouts.add(new Payout(c.date(), "COUPON", c.perBond(), "RUB", c.estimated())));
                 corporateActions.amortizations(secId).forEach(a ->
-                        payouts.add(new Payout(a.date(), "AMORTIZATION", a.perBond(), "RUB")));
+                        payouts.add(new Payout(a.date(), "AMORTIZATION", a.perBond(), "RUB", false)));
             } else if (inst instanceof Share) {
                 corporateActions.dividends(secId).forEach(d ->
-                        payouts.add(new Payout(d.recordDate(), "DIVIDEND", d.perShare(), d.currency())));
+                        payouts.add(new Payout(d.recordDate(), "DIVIDEND", d.perShare(), d.currency(), false)));
             }
         } catch (RuntimeException e) {
             log.warn("История выплат по {} недоступна: {}", secId, e.getMessage());
@@ -114,12 +151,13 @@ public class InstrumentService {
 
         return payouts.stream()
                 .map(p -> new InstrumentPaymentDto(p.date(), p.kind(), p.perUnit(), p.currency(),
-                        sharePct(p, historicalPrices, currentPrice)))
+                        sharePct(p, historicalPrices, currentPrice), p.estimated()))
                 .sorted(Comparator.comparing(InstrumentPaymentDto::date).reversed())
                 .toList();
     }
 
-    private record Payout(LocalDate date, String kind, double perUnit, String currency) {
+    private record Payout(LocalDate date, String kind, double perUnit, String currency,
+                          boolean estimated) {
     }
 
     /**

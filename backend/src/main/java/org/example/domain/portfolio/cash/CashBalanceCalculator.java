@@ -33,4 +33,22 @@ public class CashBalanceCalculator {
         }
         return externalNet + fromTrades + receivedIncome;
     }
+
+    /**
+     * Остаток для сумм капитала: если по счёту не заведено ни одного движения денег, учёт денег
+     * по нему не ведётся и остаток <b>неизвестен</b> — тогда ноль, а не минус на всю стоимость
+     * покупок.
+     * <p>
+     * Без этого счёт, заведённый до появления учёта денег, показывал бы «свободные деньги»
+     * в размере минус всех покупок, а «всего капитала» — на ту же сумму меньше правды.
+     * То же правило действует для XIRR ({@code PortfolioService.capitalFlows}): у счёта без
+     * движений денег потоки строятся по сделкам, и если добавить туда ещё и отрицательный
+     * остаток завершающим потоком, покупки вычтутся дважды.
+     *
+     * @param cashTracked ведётся ли по счёту учёт денег — то есть заведено ли хоть одно движение
+     */
+    public double reportedBalance(boolean cashTracked, double externalNet,
+                                  List<PricedTrade> trades, double receivedIncome) {
+        return cashTracked ? balance(externalNet, trades, receivedIncome) : 0.0;
+    }
 }

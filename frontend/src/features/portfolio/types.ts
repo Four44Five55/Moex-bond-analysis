@@ -25,6 +25,8 @@ export interface AccountRequest {
 export interface Transaction {
   id: number;
   secId: string;
+  /** Краткое название бумаги; null — инструмента уже нет в справочнике. */
+  secName: string | null;
   side: TradeSide;
   tradeDate: string;
   quantity: number;
@@ -116,6 +118,8 @@ export interface IncomeEvent {
   date: string;
   /** null для процентов по вкладу — бумаги там нет. */
   secId: string | null;
+  /** Краткое название бумаги: по коду вида RU000A10B2N2 не понять, чья это выплата. */
+  secName: string | null;
   kind: IncomeKind;
   gross: number;
   net: number;
@@ -191,6 +195,51 @@ export interface ConsolidatedOverview {
   /** Бумаги + свободные деньги + вклады. */
   grandTotal: number;
   depositTax: DepositTaxBreakdown;
+}
+
+/** Итог дозаполнения НКД в ранее заведённых сделках. */
+export interface AciBackfill {
+  /** true — это была примерка, ничего не сохранено. */
+  dryRun: boolean;
+  /** Сделки по облигациям с незаполненным НКД. */
+  candidates: number;
+  filled: number;
+  /** По ним биржа НКД не назвала — остались как были. */
+  unknown: number;
+  /** На столько вырастет стоимость этих сделок. */
+  costDelta: number;
+  rows: Array<{
+    txId: number;
+    secId: string;
+    secName: string | null;
+    tradeDate: string;
+    side: TradeSide;
+    quantity: number;
+    aci: number;
+    quotedOn: string;
+    amount: number;
+  }>;
+}
+
+/** Месяц календаря выплат; месяцы без выплат приходят с нулями — провал тоже информация. */
+export interface CalendarMonth {
+  /** Формат `YYYY-MM`. */
+  month: string;
+  gross: number;
+  net: number;
+  count: number;
+  byKind: Array<{ kind: IncomeKind; gross: number; net: number }>;
+}
+
+/** Календарь выплат по всему капиталу: помесячные суммы плюс сами выплаты за горизонт. */
+export interface PaymentCalendar {
+  months: CalendarMonth[];
+  totalGross: number;
+  totalNet: number;
+  /** «На руки» в среднем за месяц: делится на весь горизонт, включая пустые месяцы. */
+  averageMonthlyNet: number;
+  payments: IncomeEvent[];
+  horizonMonths: number;
 }
 
 export interface TaxBreakdown {

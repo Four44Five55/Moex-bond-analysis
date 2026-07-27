@@ -77,6 +77,20 @@ public class MoexTable implements Iterable<MoexTable.Row> {
             return i == null ? 0.0 : node.get(i).asDouble(0.0);
         }
 
+        /**
+         * Число или {@code null}, если биржа значения не назвала. В отличие от {@link #getDouble},
+         * где пустое поле неотличимо от честного нуля — а для купона флоатера это разные вещи:
+         * «ставка ещё не зафиксирована» против «купон нулевой».
+         */
+        public Double getDoubleOrNull(String column) {
+            Integer i = columnIndex.get(column);
+            if (i == null) {
+                return null;
+            }
+            JsonNode value = node.get(i);
+            return value == null || value.isNull() ? null : value.asDouble();
+        }
+
         public int getInt(String column) {
             Integer i = columnIndex.get(column);
             return i == null ? 0 : node.get(i).asInt(0);

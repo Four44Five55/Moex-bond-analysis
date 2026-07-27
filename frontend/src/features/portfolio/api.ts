@@ -1,5 +1,6 @@
 import { apiGetWithClient, apiPost, apiDelete } from "../../shared/api/client";
 import type {
+  AciBackfill,
   Account,
   AccountRequest,
   AddTransactionRequest,
@@ -11,6 +12,7 @@ import type {
   Deposit,
   DepositRequest,
   IncomeEvent,
+  PaymentCalendar,
   PortfolioHistory,
   PortfolioOverview,
   PortfolioSummary,
@@ -26,6 +28,10 @@ export const portfolioApi = {
   /** Сводка по всем счетам сразу. Отдельный путь, чтобы не конкурировать с `/accounts/{id}`. */
   consolidated: () => apiGetWithClient<ConsolidatedOverview>("/portfolio/overview"),
 
+  /** Календарь выплат по всем счетам и вкладам на months месяцев вперёд. */
+  calendar: (months: number) =>
+    apiGetWithClient<PaymentCalendar>(`/portfolio/calendar?months=${months}`),
+
   listAccounts: () => apiGetWithClient<Account[]>(A),
   getAccount: (id: number) => apiGetWithClient<Account>(`${A}/${id}`),
   createAccount: (req: AccountRequest) => apiPost<Account>(A, req, true),
@@ -36,6 +42,10 @@ export const portfolioApi = {
     apiPost<Transaction>(`${A}/${id}/transactions`, req, true),
   deleteTransaction: (id: number, txId: number) =>
     apiDelete<void>(`${A}/${id}/transactions/${txId}`, true),
+
+  /** Дозаполнить НКД в старых сделках. dryRun=true — только примерка, без записи. */
+  backfillAci: (id: number, dryRun: boolean) =>
+    apiPost<AciBackfill>(`${A}/${id}/transactions/backfill-aci?dryRun=${dryRun}`, undefined, true),
 
   /** Страница счёта целиком — вместо пяти запросов, каждый из которых пересчитывал портфель заново. */
   overview: (id: number) => apiGetWithClient<PortfolioOverview>(`${A}/${id}/overview`),

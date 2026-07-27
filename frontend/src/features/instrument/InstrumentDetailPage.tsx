@@ -1,14 +1,38 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { instrumentsApi } from "../../shared/api/endpoints";
-import type { DividendInfo, Instrument } from "../../shared/api/types";
+import type { DividendInfo, Instrument, InstrumentPayment } from "../../shared/api/types";
 import { num, pct, compact, date, daysUntil, reliabilityColor, changeColor } from "../../shared/lib/format";
 import { PriceChart } from "./PriceChart";
 import { PaymentsChart } from "./PaymentsChart";
 import { ReturnsStrip } from "./ReturnsStrip";
+import { ShowMore } from "../../shared/ui/ShowMore";
 import { useWatchlist } from "../watchlist/useWatchlist";
 import { AddToPortfolioPanel } from "../portfolio/AddToPortfolioPanel";
+
+/** Сколько выплат показывать в свёрнутом виде. */
+const COLLAPSED_PAYMENTS = 5;
+
+/**
+ * Выплаты вокруг сегодняшнего дня, в исходном порядке (новые сверху).
+ * <p>
+ * Просто обрезать список нельзя: он отсортирован от новых к старым, а у облигации график
+ * расписан до погашения — сверху оказались бы купоны 2038 года, а последняя прошедшая
+ * и ближайшая будущая выплаты, ради которых сюда и смотрят, спрятались бы под кнопкой.
+ */
+function nearestPayments(payments: InstrumentPayment[], limit: number): InstrumentPayment[] {
+  if (payments.length <= limit) {
+    return payments;
+  }
+  const today = Date.now();
+  return payments
+    .map((p, index) => ({ index, gap: Math.abs(new Date(`${p.date}T00:00:00`).getTime() - today) }))
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, limit)
+    .sort((a, b) => a.index - b.index)
+    .map((x) => payments[x.index]);
+}
 
 function metrics(i: Instrument, div?: DividendInfo | null): Array<[string, ReactNode]> {
   if (i.type === "BOND") {
@@ -106,6 +130,7 @@ export function InstrumentDetailPage() {
     queryFn: () => instrumentsApi.payments(secId),
     enabled: !!secId,
   });
+  const [allPayments, setAllPayments] = useState(false);
   const performance = useQuery({
     queryKey: ["performance", secId],
     queryFn: () => instrumentsApi.performance(secId),
@@ -224,23 +249,39 @@ export function InstrumentDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {payments.data.slice(0, 40).map((p, idx) => (
+                {(allPayments ? payments.data : nearestPayments(payments.data, COLLAPSED_PAYMENTS)).map((p, idx) => (
                   <tr key={idx}>
                     <td>{date(p.date)}</td>
                     <td>{paymentLabel[p.kind]}</td>
-                    <td className="num">{num(p.perUnit)}</td>
+                    <td className="num">
+                      {p.estimated && <span className="estimate-mark" title="Оценка по последней известной ставке">≈</span>}
+                      {num(p.perUnit)}
+                    </td>
                     <td className="num">{pct(p.sharePct)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             </div>
+            <ShowMore
+              total={payments.data.length}
+              limit={COLLAPSED_PAYMENTS}
+              expanded={allPayments}
+              onToggle={() => setAllPayments(!allPayments)}
+              collapseLabel={`Свернуть до ${COLLAPSED_PAYMENTS} ближайших`}
+            />
             <div className="hint">
               Доля выплаты в цене бумаги <b>на дату этой же выплаты</b> — то, чем выплата была
               тогда, а не в пересчёте на сегодняшнюю цену. У ещё не наступивших выплат и там,
               где котировки за тот день нет, берётся текущая цена.
               {i.type === "BOND" && " Цена считается как номинал × котировку: котировка облигации выражена в процентах номинала."}
               {" "}У амортизации это возврат тела долга, а не доход.
+              {payments.data.some((p) => p.estimated) && (
+                <>
+                  {" "}Знаком <b>≈</b> помечены купоны с плавающей ставкой: биржа фиксирует её
+                  в начале периода, поэтому будущие суммы посчитаны по последней известной ставке.
+                </>
+              )}
             </div>
           </>
         )}

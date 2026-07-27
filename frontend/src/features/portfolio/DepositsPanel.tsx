@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { num, pct, date } from "../../shared/lib/format";
+import { DateField } from "../../shared/ui/DateField";
 import type { Deposit, DepositTaxBreakdown, PayoutPeriod } from "./types";
 
 const PERIODS: Array<{ value: PayoutPeriod; label: string }> = [
@@ -93,11 +94,11 @@ export function DepositsPanel({ deposits, tax }: { deposits: Deposit[]; tax: Dep
           </label>
           <label>
             Открыт
-            <input type="date" value={openedOn} onChange={(e) => setOpenedOn(e.target.value)} required />
+            <DateField value={openedOn} onChange={setOpenedOn} required />
           </label>
           <label>
             Закрывается
-            <input type="date" value={maturesOn} onChange={(e) => setMaturesOn(e.target.value)} required />
+            <DateField value={maturesOn} onChange={setMaturesOn} required />
           </label>
           <label>
             Проценты

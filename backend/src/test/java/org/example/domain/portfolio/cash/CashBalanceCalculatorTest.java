@@ -60,4 +60,30 @@ class CashBalanceCalculatorTest {
     void withdrawalsReduceBalance() {
         assertThat(calculator.balance(100_000 - 30_000, List.of(), 0)).isEqualTo(70_000);
     }
+
+    @Test
+    void reportedBalanceHidesMinusWhenCashIsNotTracked() {
+        // Счёт без единого движения денег: остаток неизвестен, и минус на стоимость покупок
+        // нельзя ни показывать как «свободные деньги», ни вычитать из капитала.
+        PricedTrade buy = new PricedTrade(TradeSide.BUY, DAY, 10, 1_000, 50);
+
+        assertThat(calculator.reportedBalance(false, 0, List.of(buy), 0)).isZero();
+    }
+
+    @Test
+    void reportedBalanceIsTheRealOneWhenCashIsTracked() {
+        PricedTrade buy = new PricedTrade(TradeSide.BUY, DAY, 10, 1_000, 50);
+
+        assertThat(calculator.reportedBalance(true, 100_000, List.of(buy), 0))
+                .isCloseTo(89_950, org.assertj.core.data.Offset.offset(EPS));
+    }
+
+    @Test
+    void trackedAccountMayStillGoNegative() {
+        // Учёт денег ведётся, но пополнений завели меньше, чем потратили на сделки —
+        // это уже расхождение в данных пользователя, и прятать его нельзя.
+        PricedTrade buy = new PricedTrade(TradeSide.BUY, DAY, 10, 1_000, 0);
+
+        assertThat(calculator.reportedBalance(true, 5_000, List.of(buy), 0)).isNegative();
+    }
 }

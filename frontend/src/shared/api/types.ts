@@ -74,6 +74,20 @@ export interface InstrumentPayment {
   currency: string;
   /** Доля выплаты от текущей цены бумаги, %. null — если цены нет. */
   sharePct: number | null;
+  /** Купон флоатера с ещё не зафиксированной ставкой: сумма посчитана по последней известной. */
+  estimated: boolean;
+}
+
+/** НКД облигации на дату сделки. */
+export interface AccruedInterest {
+  secId: string;
+  date: string;
+  /** false — это акция, НКД у неё нет. */
+  bond: boolean;
+  /** null — определить не удалось, вписывается вручную. */
+  aci: number | null;
+  /** Торговый день, за который взято значение (в выходные — ближайший предшествующий). */
+  quotedOn: string | null;
 }
 
 export interface DividendInfo {

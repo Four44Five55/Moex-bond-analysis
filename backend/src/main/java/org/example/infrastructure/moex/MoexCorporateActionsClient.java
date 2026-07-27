@@ -1,6 +1,8 @@
 package org.example.infrastructure.moex;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.example.domain.analysis.CouponScheduleEstimator;
+import org.example.domain.analysis.ScheduledCoupon;
 import org.example.domain.model.AmortizationPayment;
 import org.example.domain.model.CouponPayment;
 import org.example.domain.model.DividendPayment;
@@ -20,28 +22,36 @@ import java.util.List;
 public class MoexCorporateActionsClient implements CorporateActionsProvider {
 
     private final MoexHttpClient http;
+    private final CouponScheduleEstimator couponScheduleEstimator;
 
-    public MoexCorporateActionsClient(MoexHttpClient http) {
+    public MoexCorporateActionsClient(MoexHttpClient http,
+                                      CouponScheduleEstimator couponScheduleEstimator) {
         this.http = http;
+        this.couponScheduleEstimator = couponScheduleEstimator;
     }
 
+    /**
+     * График купонов целиком, включая ещё не зафиксированные периоды флоатеров: они приходят
+     * с пустым {@code value} и достраиваются оценкой ({@link CouponScheduleEstimator}).
+     * Раньше такие строки отбрасывались, и флоатер оставался вообще без будущих выплат.
+     */
     @Override
     @Cacheable(cacheNames = "coupons", key = "#secId")
     public List<CouponPayment> coupons(String secId) {
         JsonNode root = http.getJson(bondizationPath(secId));
         MoexTable table = MoexTable.of(root, "coupons");
-        List<CouponPayment> result = new ArrayList<>();
         if (table == null) {
-            return result;
+            return List.of();
         }
+        List<ScheduledCoupon> schedule = new ArrayList<>();
         for (MoexTable.Row row : table) {
             LocalDate date = row.getDate("coupondate");
-            double value = row.getDouble("value");
-            if (date != null && value > 0) {
-                result.add(new CouponPayment(date, value));
+            if (date != null) {
+                schedule.add(new ScheduledCoupon(date, row.getDate("startdate"),
+                        row.getDouble("facevalue"), row.getDoubleOrNull("value")));
             }
         }
-        return result;
+        return couponScheduleEstimator.complete(schedule);
     }
 
     @Override

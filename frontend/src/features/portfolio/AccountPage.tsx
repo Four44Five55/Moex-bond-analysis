@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
+import { AciBackfillPanel } from "./AciBackfillPanel";
 import { AddTransactionForm } from "./AddTransactionForm";
 import { CashPanel } from "./CashPanel";
 import { DonutChart } from "../../shared/charts/DonutChart";
 import { LineChart } from "../../shared/charts/LineChart";
+import { ShowMore } from "../../shared/ui/ShowMore";
 import { num, pct, date } from "../../shared/lib/format";
 import type { AllocationDimension, IncomeKind } from "./types";
 
@@ -24,6 +26,13 @@ const HISTORY_PERIODS = [
 
 const changeColor = (v: number) => (v > 0 ? "#3fb950" : v < 0 ? "#f85149" : "inherit");
 
+/**
+ * Сколько строк выплат показывать свёрнутыми. Оба списка односторонние — предстоящие идут
+ * от ближайшей, полученные от последней, — поэтому здесь достаточно обрезать начало,
+ * в отличие от графика на карточке инструмента, где прошлое и будущее вперемешку.
+ */
+const COLLAPSED_ROWS = 5;
+
 const incomeLabel: Record<IncomeKind, string> = {
   COUPON: "Купон",
   AMORTIZATION: "Амортизация",
@@ -38,6 +47,8 @@ export function AccountPage() {
 
   const [allocBy, setAllocBy] = useState<AllocationDimension>("type");
   const [historyMonths, setHistoryMonths] = useState(12);
+  const [allIncome, setAllIncome] = useState(false);
+  const [allReceived, setAllReceived] = useState(false);
 
   const account = useQuery({ queryKey: ["account", id, "meta"], queryFn: () => portfolioApi.getAccount(id) });
   // Сводка, позиции, выплаты и налог приходят вместе: серверу это один снапшот портфеля вместо пяти
@@ -208,15 +219,21 @@ export function AccountPage() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Дата</th><th>Бумага</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
+                  <tr><th>Дата</th><th>Бумага</th><th>Название</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
                 </thead>
                 <tbody>
-                  {income.slice(0, 20).map((e, i) => (
+                  {(allIncome ? income : income.slice(0, COLLAPSED_ROWS)).map((e, i) => (
                     <tr key={i}>
                       <td>{date(e.date)}</td>
                       <td>{e.secId}</td>
+                      <td>{e.secName ?? "—"}</td>
                       <td>{incomeLabel[e.kind]}</td>
-                      <td className="num">{num(e.gross)}</td>
+                      <td className="num">
+                        {e.estimate && (
+                          <span className="estimate-mark" title="Плавающая ставка: оценка по последней известной">≈</span>
+                        )}
+                        {num(e.gross)}
+                      </td>
                       <td className="num">{num(e.net)}</td>
                     </tr>
                   ))}
@@ -224,7 +241,23 @@ export function AccountPage() {
               </table>
             </div>
           )}
-          <div className="hint">Показаны только объявленные MOEX выплаты (купоны, амортизации, дивиденды с назначенной датой отсечки).</div>
+          {income && (
+            <ShowMore
+              total={income.length}
+              limit={COLLAPSED_ROWS}
+              expanded={allIncome}
+              onToggle={() => setAllIncome(!allIncome)}
+              collapseLabel={`Свернуть до ${COLLAPSED_ROWS} ближайших`}
+            />
+          )}
+          <div className="hint">
+            Показаны только объявленные MOEX выплаты (купоны, амортизации, дивиденды с назначенной
+            датой отсечки).
+            {income?.some((e) => e.estimate) && (
+              <> Знаком <b>≈</b> помечены купоны с плавающей ставкой — они посчитаны по последней
+              известной ставке.</>
+            )}
+          </div>
         </section>
 
         <section className="panel">
@@ -252,13 +285,14 @@ export function AccountPage() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Дата</th><th>Бумага</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
+                <tr><th>Дата</th><th>Бумага</th><th>Название</th><th>Тип</th><th className="num">Начислено</th><th className="num">На руки</th></tr>
               </thead>
               <tbody>
-                {received.slice(0, 50).map((e, i) => (
+                {(allReceived ? received : received.slice(0, COLLAPSED_ROWS)).map((e, i) => (
                   <tr key={i}>
                     <td>{date(e.date)}</td>
                     <td>{e.secId}</td>
+                    <td>{e.secName ?? "—"}</td>
                     <td>{incomeLabel[e.kind]}</td>
                     <td className="num">{num(e.gross)}</td>
                     <td className="num">{num(e.net)}</td>
@@ -267,6 +301,15 @@ export function AccountPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {received && (
+          <ShowMore
+            total={received.length}
+            limit={COLLAPSED_ROWS}
+            expanded={allReceived}
+            onToggle={() => setAllReceived(!allReceived)}
+            collapseLabel={`Свернуть до ${COLLAPSED_ROWS} последних`}
+          />
         )}
         <div className="hint">Учтены только выплаты, где на дату отсечки у тебя реально была позиция (× количество на тот момент).</div>
       </section>
@@ -280,13 +323,14 @@ export function AccountPage() {
 
       <section className="panel">
         <h2>Сделки</h2>
+        <AciBackfillPanel accountId={id} />
         {txns.data && txns.data.length === 0 && <div className="empty">Сделок ещё нет.</div>}
         {txns.data && txns.data.length > 0 && (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Дата</th><th>Код</th><th>Тип</th><th className="num">Кол-во</th>
+                  <th>Дата</th><th>Код</th><th>Название</th><th>Тип</th><th className="num">Кол-во</th>
                   <th className="num">Цена</th><th className="num">НКД</th><th className="num">Комиссия</th><th></th>
                 </tr>
               </thead>
@@ -295,6 +339,7 @@ export function AccountPage() {
                   <tr key={tx.id}>
                     <td>{date(tx.tradeDate)}</td>
                     <td>{tx.secId}</td>
+                    <td>{tx.secName ?? "—"}</td>
                     <td>{tx.side === "BUY" ? "Покупка" : "Продажа"}</td>
                     <td className="num">{num(tx.quantity, 0)}</td>
                     <td className="num">{num(tx.price)}</td>

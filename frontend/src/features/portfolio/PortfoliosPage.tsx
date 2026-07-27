@@ -5,15 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { DonutChart } from "../../shared/charts/DonutChart";
 import { DepositsPanel } from "./DepositsPanel";
-import { num, pct, date, changeColor } from "../../shared/lib/format";
-import type { AccountRequest, AccountType, ConsolidatedOverview, IisType, IncomeKind } from "./types";
-
-const incomeLabel: Record<IncomeKind, string> = {
-  COUPON: "Купон",
-  AMORTIZATION: "Амортизация",
-  DIVIDEND: "Дивиденд",
-  INTEREST: "Проценты",
-};
+import { PaymentCalendarPanel } from "./PaymentCalendarPanel";
+import { num, pct, changeColor } from "../../shared/lib/format";
+import type { AccountRequest, AccountType, ConsolidatedOverview, IisType } from "./types";
 
 /** Считать есть что, если где-то есть бумаги, деньги или вклад — одного пополнения уже достаточно. */
 const hasSomething = (o: ConsolidatedOverview) =>
@@ -110,34 +104,8 @@ export function PortfoliosPage() {
             </section>
           </div>
 
-          <section className="panel">
-            <h2>Ближайшие выплаты по всем счетам</h2>
-            {o.upcomingIncome.length === 0 && <div className="empty">Объявленных выплат нет.</div>}
-            {o.upcomingIncome.length > 0 && (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Дата</th><th>Бумага</th><th>Счёт</th><th>Тип</th>
-                      <th className="num">Начислено</th><th className="num">На руки</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {o.upcomingIncome.slice(0, 15).map((e, i) => (
-                      <tr key={i}>
-                        <td>{date(e.date)}</td>
-                        <td>{e.secId ?? "—"}</td>
-                        <td>{e.accountName}</td>
-                        <td>{incomeLabel[e.kind]}</td>
-                        <td className="num">{num(e.gross)}</td>
-                        <td className="num">{num(e.net)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+          {/* Ближайшие выплаты живут в календаре: тот же список, но с помесячными суммами */}
+          <PaymentCalendarPanel />
         </>
       )}
 

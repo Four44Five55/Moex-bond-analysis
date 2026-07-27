@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { portfolioApi } from "./api";
 import { num, date } from "../../shared/lib/format";
+import { DateField } from "../../shared/ui/DateField";
 import type { CashDirection } from "./types";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -55,10 +56,18 @@ export function CashPanel({ accountId, balance }: { accountId: number; balance: 
         <div className="cash-balance">{num(balance)} ₽</div>
       </div>
 
-      {balance != null && balance < 0 && (
+      {list.length === 0 && (
         <div className="hint">
-          Остаток отрицательный: сделки заведены, а пополнения — нет. Добавьте пополнение на сумму,
-          с которой начинали, — тогда доходность будет считаться от реально вложенных денег.
+          Движений денег нет, поэтому остаток неизвестен и в суммах капитала идёт нулём.
+          Добавьте пополнение на сумму, с которой начинали, — появится и остаток,
+          и доходность от реально вложенных денег.
+        </div>
+      )}
+
+      {list.length > 0 && balance != null && balance < 0 && (
+        <div className="hint">
+          Остаток отрицательный: на сделки и комиссии ушло больше, чем заведено пополнений.
+          Проверьте, все ли пополнения внесены.
         </div>
       )}
 
@@ -72,7 +81,7 @@ export function CashPanel({ accountId, balance }: { accountId: number; balance: 
         </label>
         <label>
           Дата
-          <input type="date" value={movedOn} onChange={(e) => setMovedOn(e.target.value)} required />
+          <DateField value={movedOn} onChange={setMovedOn} required />
         </label>
         <label>
           Сумма, ₽
@@ -94,7 +103,6 @@ export function CashPanel({ accountId, balance }: { accountId: number; balance: 
         </button>
       </form>
 
-      {list.length === 0 && <div className="empty">Движений денег пока нет.</div>}
       {list.length > 0 && (
         <div className="table-wrap">
           <table>

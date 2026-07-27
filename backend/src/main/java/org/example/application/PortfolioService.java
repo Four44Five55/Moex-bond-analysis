@@ -7,6 +7,10 @@ import org.example.domain.portfolio.allocation.AllocationCalculator;
 import org.example.domain.portfolio.allocation.AllocationDimension;
 import org.example.domain.portfolio.allocation.AllocationDimensionFactory;
 import org.example.domain.portfolio.allocation.Holding;
+import org.example.domain.portfolio.calendar.PaymentCalendar;
+import org.example.domain.portfolio.calendar.PaymentCalendarCalculator;
+import org.example.domain.portfolio.calendar.PaymentCalendarEntry;
+import org.example.domain.portfolio.calendar.PaymentCalendarMonth;
 import org.example.domain.portfolio.cash.CashBalanceCalculator;
 import org.example.domain.portfolio.deposit.DepositCalculator;
 import org.example.domain.portfolio.deposit.DepositTaxBreakdown;
@@ -27,9 +31,12 @@ import org.example.infrastructure.persistence.TransactionRepository;
 import org.example.domain.port.CorporateActionsProvider;
 import org.example.web.dto.portfolio.AccountLineDto;
 import org.example.web.dto.portfolio.AllocationSliceDto;
+import org.example.web.dto.portfolio.CalendarKindDto;
+import org.example.web.dto.portfolio.CalendarMonthDto;
 import org.example.web.dto.portfolio.ConsolidatedOverviewDto;
 import org.springframework.beans.factory.annotation.Value;
 import org.example.web.dto.portfolio.IncomeEventDto;
+import org.example.web.dto.portfolio.PaymentCalendarDto;
 import org.example.web.dto.portfolio.PortfolioHistoryDto;
 import org.example.web.dto.portfolio.PortfolioOverviewDto;
 import org.example.web.dto.portfolio.PortfolioSummaryDto;
@@ -42,6 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -58,8 +66,15 @@ public class PortfolioService {
     private static final int PROJECTION_MONTHS = 12;
     private static final int DEFAULT_HISTORY_MONTHS = 12;
     private static final int MAX_HISTORY_MONTHS = 120;
+    /** Дальше горизонт календаря смысла не имеет: купоны известны до погашения, дивиденды — нет. */
+    private static final int MAX_CALENDAR_MONTHS = 60;
     /** Код дневного интервала свечей MOEX. */
     private static final int DAILY_INTERVAL = 24;
+    /**
+     * Запас свечей до начала периода ряда стоимости: цена на дату берётся по ближайшему
+     * предшествующему торговому дню, а новогодние каникулы длиннее недели.
+     */
+    private static final int PRICE_LOOKBACK_DAYS = 14;
 
     private final AccountService accountService;
     private final TransactionRepository transactionRepository;
@@ -78,6 +93,7 @@ public class PortfolioService {
     private final DepositService depositService;
     private final DepositCalculator depositCalculator;
     private final DepositTaxCalculator depositTaxCalculator;
+    private final PaymentCalendarCalculator paymentCalendarCalculator;
     private final KeyRateService keyRateService;
 
     public PortfolioService(AccountService accountService,
@@ -97,12 +113,14 @@ public class PortfolioService {
                             DepositService depositService,
                             DepositCalculator depositCalculator,
                             DepositTaxCalculator depositTaxCalculator,
+                            PaymentCalendarCalculator paymentCalendarCalculator,
                             KeyRateService keyRateService) {
         this.cashMovementRepository = cashMovementRepository;
         this.cashBalanceCalculator = cashBalanceCalculator;
         this.depositService = depositService;
         this.depositCalculator = depositCalculator;
         this.depositTaxCalculator = depositTaxCalculator;
+        this.paymentCalendarCalculator = paymentCalendarCalculator;
         this.keyRateService = keyRateService;
         this.accountService = accountService;
         this.transactionRepository = transactionRepository;
@@ -127,7 +145,8 @@ public class PortfolioService {
      *                      чтобы расчёт полученных выплат не перечитывал их из БД второй раз
      * @param pricedTrades  сделки, приведённые к деньгам — нужны расчёту остатка наличных
      * @param cashMovements пополнения и выводы; пустой список означает, что учёт денег по счёту
-     *                      не ведётся, и это меняет способ расчёта доходности (см. {@link #capitalFlows})
+     *                      не ведётся, и это меняет и остаток ({@link #freeCash}),
+     *                      и способ расчёта доходности (см. {@link #capitalFlows})
      */
     private record Snapshot(Account account, List<Transaction> transactions,
                             Map<String, Instrument> instruments,
@@ -135,11 +154,6 @@ public class PortfolioService {
                             List<CashMovement> cashMovements,
                             List<PositionView> positions,
                             List<RealizedSale> realizedSales, double totalCommission) {
-
-        /** Пополнения минус выводы. */
-        private double externalCashNet() {
-            return cashMovements.stream().mapToDouble(CashMovement::signedAmount).sum();
-        }
     }
 
     // --- Публичные операции ---
@@ -154,7 +168,7 @@ public class PortfolioService {
         Snapshot s = snapshot(account);
         boolean couponTaxable = isCouponTaxable(account);
         return rawIncomeEvents(s).stream()
-                .map(e -> toIncomeDto(e, account, couponTaxable))
+                .map(e -> toIncomeDto(e, account, couponTaxable, s.instruments()))
                 .toList();
     }
 
@@ -168,7 +182,8 @@ public class PortfolioService {
     public List<IncomeEventDto> received(String clientId, Long accountId) {
         Account account = accountService.getOwned(clientId, accountId);
         List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
-        return toReceivedDtos(realizedIncomeEvents(txns, loadInstruments(txns)), account);
+        Map<String, Instrument> instruments = loadInstruments(txns);
+        return toReceivedDtos(realizedIncomeEvents(txns, instruments), account, instruments);
     }
 
     /**
@@ -193,8 +208,8 @@ public class PortfolioService {
         return new PortfolioOverviewDto(
                 summaryOf(s, annual, tax.totalTax(), realized),
                 s.positions().stream().map(this::toDto).toList(),
-                forecast.stream().map(e -> toIncomeDto(e, account, couponTaxable)).toList(),
-                toReceivedDtos(realized, account),
+                forecast.stream().map(e -> toIncomeDto(e, account, couponTaxable, s.instruments())).toList(),
+                toReceivedDtos(realized, account, s.instruments()),
                 tax);
     }
 
@@ -259,7 +274,7 @@ public class PortfolioService {
             totals.tax += computeTax(account, s.realizedSales(), annual).totalTax();
             totals.positions += s.positions().size();
 
-            double accountCash = cashBalance(s.cashMovements(), s.pricedTrades(), realizedIncome);
+            double accountCash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome);
             totals.cashBalance += accountCash;
 
             lines.add(toAccountLine(account, s, accountInvested, accountValue, accountCash));
@@ -271,7 +286,7 @@ public class PortfolioService {
             for (PositionView p : s.positions()) {
                 typeHoldings.add(new Holding(byTypeDimension.categoryOf(p.instrument()), p.marketValue()));
             }
-            forecast.forEach(e -> upcoming.add(toIncomeDto(e, account, couponTaxable)));
+            forecast.forEach(e -> upcoming.add(toIncomeDto(e, account, couponTaxable, s.instruments())));
             flows.addAll(capitalFlows(s.transactions(), s.instruments(), s.cashMovements()));
         }
 
@@ -309,6 +324,64 @@ public class PortfolioService {
     }
 
     /**
+     * Календарь выплат по всему капиталу клиента: помесячные суммы за горизонт и сами выплаты.
+     * <p>
+     * Считается по тем же событиям, что и сводка, но горизонт здесь параметр, а не фиксированный
+     * год: облигационная лестница видна только на нескольких годах вперёд. Месяцы без выплат
+     * заполняются нулями — провал в календаре и есть то, ради чего его смотрят.
+     * <p>
+     * Дивиденды попадают сюда только объявленные, поэтому дальние месяцы у акций пустуют
+     * не потому, что выплат не будет, а потому что их ещё не объявили ({@link IncomeForecaster}).
+     *
+     * @param months длина горизонта; приводится к диапазону 1..{@value #MAX_CALENDAR_MONTHS}
+     */
+    public PaymentCalendarDto calendar(String clientId, int months) {
+        int horizon = Math.min(Math.max(months, 1), MAX_CALENDAR_MONTHS);
+        List<Account> accounts = accountService.list(clientId);
+        List<Deposit> deposits = depositService.entities(clientId);
+        if (accounts.isEmpty() && deposits.isEmpty()) {
+            return PaymentCalendarDto.empty(horizon);
+        }
+
+        LocalDate today = LocalDate.now();
+        YearMonth firstMonth = YearMonth.from(today);
+        LocalDate until = firstMonth.plusMonths(horizon).atDay(1); // первый день за горизонтом
+
+        List<IncomeEventDto> payments = new ArrayList<>();
+        for (Account account : accounts) {
+            boolean couponTaxable = isCouponTaxable(account);
+            Snapshot s = snapshot(account);
+            rawIncomeEvents(s).stream()
+                    .filter(e -> e.date().isBefore(until))
+                    .map(e -> toIncomeDto(e, account, couponTaxable, s.instruments()))
+                    .forEach(payments::add);
+        }
+        for (Deposit deposit : deposits) {
+            upcomingInterest(deposit, today).stream()
+                    .filter(e -> e.date().isBefore(until))
+                    .forEach(payments::add);
+        }
+        payments.sort(Comparator.comparing(IncomeEventDto::date));
+
+        List<PaymentCalendarEntry> entries = payments.stream()
+                .map(p -> new PaymentCalendarEntry(p.date(), p.kind(), p.gross(), p.net()))
+                .toList();
+        PaymentCalendar calendar = paymentCalendarCalculator.build(entries, firstMonth, horizon);
+
+        return new PaymentCalendarDto(
+                calendar.months().stream().map(PortfolioService::toMonthDto).toList(),
+                calendar.totalGross(), calendar.totalNet(), calendar.averageMonthlyNet(),
+                payments, horizon);
+    }
+
+    private static CalendarMonthDto toMonthDto(PaymentCalendarMonth m) {
+        return new CalendarMonthDto(m.month().toString(), m.gross(), m.net(), m.count(),
+                m.byKind().stream()
+                        .map(sl -> new CalendarKindDto(sl.kind(), sl.gross(), sl.net()))
+                        .toList());
+    }
+
+    /**
      * Ближайшие поступления процентов по вкладу — на тех же правах, что купоны и дивиденды.
      * <p>
      * {@code net} равен {@code gross}: налог с процентов считается не с каждой выплаты, а от
@@ -318,7 +391,7 @@ public class PortfolioService {
     private List<IncomeEventDto> upcomingInterest(Deposit deposit, LocalDate today) {
         return depositCalculator.payouts(deposit).stream()
                 .filter(a -> !a.date().isBefore(today))
-                .map(a -> new IncomeEventDto(a.date(), null, IncomeKind.INTEREST,
+                .map(a -> new IncomeEventDto(a.date(), null, null, IncomeKind.INTEREST,
                         a.amount(), a.amount(), false, deposit.getName()))
                 .toList();
     }
@@ -428,9 +501,8 @@ public class PortfolioService {
         List<CashMovement> movements = cashMovementRepository
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
         double positionsValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
-        double terminal = positionsValue + (movements.isEmpty() ? 0.0
-                : cashBalance(movements, pricedTrades(txns, instruments),
-                        realizedIncomeEvents(txns, instruments)));
+        double terminal = positionsValue + freeCash(movements, pricedTrades(txns, instruments),
+                realizedIncomeEvents(txns, instruments));
         Double xirr = computeXirr(capitalFlows(txns, instruments, movements), terminal, to);
 
         return new PortfolioHistoryDto(
@@ -453,21 +525,39 @@ public class PortfolioService {
                 .toList();
     }
 
-    /** Дневные цены закрытия, приведённые к деньгам за бумагу. Сбой источника → бумага без истории. */
+    /**
+     * Дневные цены закрытия, приведённые к деньгам за бумагу.
+     * <p>
+     * Свечи запрашиваются с запасом до начала периода: цена берётся по ближайшему предшествующему
+     * торговому дню, а первый день ряда легко приходится на выходные или праздники. Без запаса
+     * для этих дат не находилось ни одной цены, и ряд начинался с нулевой стоимости —
+     * график падал в ноль на старте.
+     * <p>
+     * Если истории нет вовсе (неликвид или сбой источника), позиция оценивается последней
+     * известной ценой на всём периоде. Это ровная линия вместо динамики, но альтернатива —
+     * ноль в стоимости при живой сумме во «вложено», то есть портфель в минус на всю бумагу.
+     */
     private Map<LocalDate, Double> dailyCloses(String secId, Instrument instrument,
                                                LocalDate from, LocalDate to) {
+        LocalDate priceFrom = from.minusDays(PRICE_LOOKBACK_DAYS);
+        Map<LocalDate, Double> closes = new HashMap<>();
         try {
-            Map<LocalDate, Double> closes = new HashMap<>();
-            for (var candle : candleService.getCandles(secId, DAILY_INTERVAL, from, to)) {
+            for (var candle : candleService.getCandles(secId, DAILY_INTERVAL, priceFrom, to)) {
                 LocalDate date = Instant.ofEpochSecond(candle.time())
                         .atZone(ZoneOffset.UTC).toLocalDate();
                 closes.put(date, InstrumentPricing.moneyPerUnit(instrument, candle.close()));
             }
-            return closes;
         } catch (RuntimeException e) {
-            log.warn("История цен по {} недоступна, бумага не войдёт в ряд стоимости: {}", secId, e.getMessage());
-            return Map.of();
+            log.warn("История цен по {} недоступна: {}", secId, e.getMessage());
         }
+        if (closes.isEmpty()) {
+            double lastKnown = InstrumentPricing.currentMoneyPerUnit(instrument);
+            if (lastKnown > 0) {
+                log.warn("Свечей по {} нет, в ряду стоимости бумага пойдёт по последней цене", secId);
+                closes.put(priceFrom, lastKnown);
+            }
+        }
+        return closes;
     }
 
     private Double computeXirr(List<CashFlow> baseFlows, double terminalValue, LocalDate to) {
@@ -500,11 +590,15 @@ public class PortfolioService {
                 .toList();
     }
 
-    private double cashBalance(List<CashMovement> movements, List<PricedTrade> trades,
-                               List<IncomeEvent> receivedIncome) {
+    /**
+     * Свободные деньги счёта — или 0, если учёт денег по счёту не ведётся
+     * (см. {@link CashBalanceCalculator#reportedBalance}).
+     */
+    private double freeCash(List<CashMovement> movements, List<PricedTrade> trades,
+                            List<IncomeEvent> receivedIncome) {
         double externalNet = movements.stream().mapToDouble(CashMovement::signedAmount).sum();
         double received = receivedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-        return cashBalanceCalculator.balance(externalNet, trades, received);
+        return cashBalanceCalculator.reportedBalance(!movements.isEmpty(), externalNet, trades, received);
     }
 
     private List<PricedTrade> pricedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
@@ -553,7 +647,7 @@ public class PortfolioService {
         double marketValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
         double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
         double receivedIncome = realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-        double cash = cashBalance(s.cashMovements(), s.pricedTrades(), realizedIncome);
+        double cash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome);
 
         return new PortfolioSummaryDto(invested, marketValue, cash, marketValue + cash,
                 marketValue - invested, realized,
@@ -589,7 +683,8 @@ public class PortfolioService {
             double qty = fifo.openQuantity();
             if (qty > 1e-9) {
                 double openCost = fifo.openCost();
-                double marketValue = InstrumentPricing.currentMoneyPerUnit(inst) * qty;
+                // Грязная цена: себестоимость лота уже содержит уплаченный НКД
+                double marketValue = InstrumentPricing.currentPositionMoneyPerUnit(inst) * qty;
                 positions.add(new PositionView(inst, entry.getKey(), qty, openCost,
                         marketValue, marketValue - openCost));
             }
@@ -725,15 +820,23 @@ public class PortfolioService {
     }
 
     /** Полученные выплаты — новыми вперёд. */
-    private List<IncomeEventDto> toReceivedDtos(List<IncomeEvent> events, Account account) {
+    private List<IncomeEventDto> toReceivedDtos(List<IncomeEvent> events, Account account,
+                                                Map<String, Instrument> instruments) {
         boolean couponTaxable = isCouponTaxable(account);
         return events.stream()
                 .sorted(Comparator.comparing(IncomeEvent::date).reversed())
-                .map(e -> toIncomeDto(e, account, couponTaxable))
+                .map(e -> toIncomeDto(e, account, couponTaxable, instruments))
                 .toList();
     }
 
-    private IncomeEventDto toIncomeDto(IncomeEvent e, Account account, boolean couponTaxable) {
+    /** Название бумаги для списков выплат; код без названия читается плохо, но и падать из-за него незачем. */
+    private static String nameOf(Map<String, Instrument> instruments, String secId) {
+        Instrument instrument = secId == null ? null : instruments.get(secId);
+        return instrument == null ? null : instrument.getShortName();
+    }
+
+    private IncomeEventDto toIncomeDto(IncomeEvent e, Account account, boolean couponTaxable,
+                                       Map<String, Instrument> instruments) {
         double net = switch (e.kind()) {
             case AMORTIZATION -> e.gross();  // возврат тела долга, не доход
             // Проценты вкладов сюда не попадают (у них свой путь), но ветка обязана существовать:
@@ -742,8 +845,8 @@ public class PortfolioService {
             case COUPON -> couponTaxable ? e.gross() * (1 - account.getBaseTaxRate() / 100.0) : e.gross();
             case DIVIDEND -> e.gross() * (1 - TaxRates.DIVIDEND_PCT / 100.0);
         };
-        return new IncomeEventDto(e.date(), e.secId(), e.kind(), e.gross(), net, e.estimate(),
-                account.getName());
+        return new IncomeEventDto(e.date(), e.secId(), nameOf(instruments, e.secId()), e.kind(),
+                e.gross(), net, e.estimate(), account.getName());
     }
 
     private boolean isCouponTaxable(Account account) {

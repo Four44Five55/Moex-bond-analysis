@@ -8,6 +8,7 @@ import org.example.domain.model.Bond;
 import org.example.domain.model.CouponPayment;
 import org.example.domain.model.DividendPayment;
 import org.example.domain.model.Share;
+import org.example.domain.port.BondHistoryProvider;
 import org.example.domain.port.CorporateActionsProvider;
 import org.example.infrastructure.moex.MoexClientException;
 import org.example.infrastructure.persistence.BondRepository;
@@ -40,11 +41,12 @@ class InstrumentServiceTest {
     @Mock InstrumentRepository instrumentRepository;
     @Mock BondAnalyzer bondAnalyzer;
     @Mock CorporateActionsProvider corporateActions;
+    @Mock BondHistoryProvider bondHistory;
     @Mock CandleService candleService;
 
     private InstrumentService service() {
         return new InstrumentService(bondRepository, shareRepository,
-                instrumentRepository, bondAnalyzer, corporateActions,
+                instrumentRepository, bondAnalyzer, corporateActions, bondHistory,
                 candleService, new ReturnsCalculator(), new DividendYieldCalculator());
     }
 

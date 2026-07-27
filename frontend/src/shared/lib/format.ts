@@ -11,10 +11,11 @@ export const compact = (v: number | null | undefined): string => {
   return new Intl.NumberFormat("ru-RU", { notation: "compact", maximumFractionDigits: 1 }).format(v);
 };
 
+/** Дата в коротком виде `дд.мм.гг`: век в таблицах портфеля не несёт информации. */
 export const date = (iso: string | null | undefined): string => {
   if (!iso) return "—";
   const [y, m, d] = iso.split("-");
-  return d ? `${d}.${m}.${y}` : iso;
+  return d ? `${d}.${m}.${y.slice(2)}` : iso;
 };
 
 /** Цвет фона для балла надёжности (1..10). */
