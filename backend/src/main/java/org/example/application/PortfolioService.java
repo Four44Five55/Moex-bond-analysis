@@ -560,17 +560,44 @@ public class PortfolioService {
         // иначе доходность считалась бы от внесённых сумм, но капитал в кэше был бы потерян
         List<CashMovement> movements = cashMovementRepository
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
-        double positionsValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
+        BigDecimal positionsValue = Money.sum(
+                foldBySecurity(txns, instruments).positions(), PositionView::marketValue);
         BigDecimal cash = freeCash(movements, pricedTrades(txns, instruments),
                 realizedIncomeEvents(txns, instruments), fundedDeposits(account));
-        double terminal = positionsValue + Money.toDouble(cash);
+        double terminal = Money.toDouble(positionsValue.add(cash));
         Double xirr = computeXirr(capitalFlows(txns, instruments, movements), terminal, to);
 
         return new PortfolioHistoryDto(
-                series.stream()
-                        .map(p -> new ValuePointDto(p.date(), p.value(), p.invested(), p.pnl()))
-                        .toList(),
+                toPointDtos(pinToCurrentValue(series, positionsValue)),
                 xirr == null ? null : xirr * 100.0);
+    }
+
+    /**
+     * Подтягивает последнюю точку ряда к текущей оценке позиций.
+     * <p>
+     * Ряд строится по ценам закрытия свечей, а карточка капитала — по цене последней сделки
+     * ({@code lastPrice}), и у облигаций ещё и по грязной цене. Без этого конец линии на графике
+     * не сходился с числом в сводке, хотя показывают они одно и то же.
+     * <p>
+     * Пустая текущая оценка ряд не трогает: ноль здесь означает не «позиций нет» (тогда и
+     * последняя точка уже нулевая), а «котировок нет ни по одной бумаге» — и обрыв графика
+     * в ноль был бы хуже, чем последняя известная цена закрытия.
+     */
+    private static List<ValuePoint> pinToCurrentValue(List<ValuePoint> series, BigDecimal currentValue) {
+        if (series.isEmpty() || !Money.isPositive(currentValue)) {
+            return series;
+        }
+        List<ValuePoint> pinned = new ArrayList<>(series);
+        int last = pinned.size() - 1;
+        pinned.set(last, new ValuePoint(pinned.get(last).date(),
+                Money.toDouble(currentValue), pinned.get(last).invested()));
+        return pinned;
+    }
+
+    private static List<ValuePointDto> toPointDtos(List<ValuePoint> series) {
+        return series.stream()
+                .map(p -> new ValuePointDto(p.date(), p.value(), p.invested(), p.pnl()))
+                .toList();
     }
 
     private int clampMonths(int months) {
@@ -686,6 +713,7 @@ public class PortfolioService {
                 .reduce(Money.ZERO, BigDecimal::add);
     }
 
+    /** Сделки, приведённые к деньгам: цена облигации — из % номинала плюс НКД. */
     private List<PricedTrade> pricedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
         return txns.stream()
                 .map(t -> new PricedTrade(t.getSide(), t.getTradeDate(), t.getQuantity(),
@@ -780,21 +808,32 @@ public class PortfolioService {
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
         BigDecimal totalCommission = Money.sum(txns, Transaction::getCommission);
 
-        Map<String, List<Transaction>> bySec = groupBySecId(txns);
         Map<String, Instrument> instruments = loadInstruments(txns);
+        Folded folded = foldBySecurity(txns, instruments);
 
+        return new Snapshot(account, txns, instruments, pricedTrades(txns, instruments), movements,
+                folded.positions(), folded.realizedSales(), totalCommission);
+    }
+
+    /** Результат FIFO-свёртки по всем бумагам счёта. */
+    private record Folded(List<PositionView> positions, List<RealizedSale> realizedSales) {
+    }
+
+    /**
+     * FIFO по каждой бумаге: открытые позиции с текущей оценкой и реализованные продажи.
+     * <p>
+     * Вынесено из {@link #snapshot}, потому что та же оценка нужна ряду стоимости: раньше он
+     * брал терминальную стоимость из последней точки свечного ряда, и XIRR на странице счёта
+     * расходился с XIRR на странице портфеля на всю разницу между ценой последней сделки
+     * и ценой закрытия свечи — а у облигаций ещё и на весь НКД.
+     */
+    private Folded foldBySecurity(List<Transaction> txns, Map<String, Instrument> instruments) {
         List<PositionView> positions = new ArrayList<>();
         List<RealizedSale> realized = new ArrayList<>();
 
-        for (var entry : bySec.entrySet()) {
+        for (var entry : groupBySecId(txns).entrySet()) {
             Instrument inst = instruments.get(entry.getKey());
-            List<PricedTrade> priced = entry.getValue().stream()
-                    .map(t -> new PricedTrade(t.getSide(), t.getTradeDate(), t.getQuantity(),
-                            InstrumentPricing.tradeMoneyPerUnit(inst, t.getPrice(), t.getAci()),
-                            t.getCommission()))
-                    .toList();
-
-            FifoResult fifo = fifoCalculator.process(priced);
+            FifoResult fifo = fifoCalculator.process(pricedTrades(entry.getValue(), instruments));
             realized.addAll(fifo.realizedSales());
 
             BigDecimal qty = fifo.openQuantity();
@@ -807,8 +846,7 @@ public class PortfolioService {
                         marketValue, marketValue.subtract(openCost)));
             }
         }
-        return new Snapshot(account, txns, instruments, pricedTrades(txns, instruments), movements,
-                positions, realized, totalCommission);
+        return new Folded(positions, realized);
     }
 
     private Map<String, List<Transaction>> groupBySecId(List<Transaction> txns) {
