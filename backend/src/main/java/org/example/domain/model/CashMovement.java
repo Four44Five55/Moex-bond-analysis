@@ -3,7 +3,9 @@ package org.example.domain.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.domain.money.Money;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
@@ -31,8 +33,8 @@ public class CashMovement {
     @Column(name = "moved_on", nullable = false)
     private LocalDate movedOn;
 
-    @Column(nullable = false)
-    private double amount;
+    @Column(nullable = false, precision = 19, scale = 2)
+    private BigDecimal amount = Money.ZERO;
 
     private String note;
 
@@ -40,7 +42,7 @@ public class CashMovement {
     private Instant createdAt = Instant.now();
 
     /** Сумма со знаком: пополнение увеличивает остаток, вывод уменьшает. */
-    public double signedAmount() {
-        return direction == CashDirection.OUT ? -amount : amount;
+    public BigDecimal signedAmount() {
+        return direction == CashDirection.OUT ? amount.negate() : amount;
     }
 }

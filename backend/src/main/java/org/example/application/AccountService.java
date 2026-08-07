@@ -2,6 +2,8 @@ package org.example.application;
 
 import org.example.domain.model.Account;
 import org.example.domain.model.AccountType;
+import org.example.domain.money.Money;
+import org.example.domain.portfolio.tax.TaxRates;
 import org.example.infrastructure.persistence.AccountRepository;
 import org.example.web.dto.portfolio.AccountRequest;
 import org.springframework.stereotype.Service;
@@ -58,7 +60,9 @@ public class AccountService {
         account.setName(req.name());
         account.setType(req.type());
         account.setIisType(req.type() == AccountType.IIS ? req.iisType() : null);
-        account.setDefaultCommissionPct(req.defaultCommissionPct());
-        account.setBaseTaxRate(req.baseTaxRate() > 0 ? req.baseTaxRate() : 13.0);
+        account.setDefaultCommissionPct(Money.orZero(req.defaultCommissionPct()));
+        account.setBaseTaxRate(Money.isPositive(req.baseTaxRate())
+                ? req.baseTaxRate()
+                : TaxRates.BASE_PCT);
     }
 }

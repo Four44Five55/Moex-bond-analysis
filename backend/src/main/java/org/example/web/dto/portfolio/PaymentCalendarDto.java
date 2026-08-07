@@ -1,5 +1,8 @@
 package org.example.web.dto.portfolio;
 
+import org.example.domain.money.Money;
+
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -15,15 +18,16 @@ import java.util.List;
  * @param principalReturn возврат номинала — вложенное возвращается, доходом не является
  */
 public record PaymentCalendarDto(List<CalendarMonthDto> months,
-                                 double totalGross,
-                                 double incomeGross,
-                                 double principalReturn,
-                                 double totalNet,
-                                 double averageMonthlyNet,
+                                 BigDecimal totalGross,
+                                 BigDecimal incomeGross,
+                                 BigDecimal principalReturn,
+                                 BigDecimal totalNet,
+                                 BigDecimal averageMonthlyNet,
                                  List<IncomeEventDto> payments,
                                  int horizonMonths) {
 
     public static PaymentCalendarDto empty(int horizonMonths) {
-        return new PaymentCalendarDto(List.of(), 0, 0, 0, 0, 0, List.of(), horizonMonths);
+        return new PaymentCalendarDto(List.of(), Money.ZERO, Money.ZERO, Money.ZERO,
+                Money.ZERO, Money.ZERO, List.of(), horizonMonths);
     }
 }

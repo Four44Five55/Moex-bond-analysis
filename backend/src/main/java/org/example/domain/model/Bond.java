@@ -18,20 +18,26 @@ import java.time.LocalDate;
 @Setter
 public class Bond extends Instrument {
 
-    @Column(name = "face_value")
+    @Column(name = "face_value", nullable = false)
     private double faceValue;
 
-    @Column(name = "coupon_rate")
+    @Column(name = "coupon_rate", nullable = false)
     private double couponRate;
 
+    /**
+     * Величины, которых у выпуска может <b>не быть</b>, — отсюда обёртки, а не примитивы.
+     * У бумаги без сделок доходность и дюрация не определены, и ноль вместо них не нейтрален:
+     * он проходит фильтр «дюрация не больше N» и всплывает в сортировке по доходности как
+     * настоящее значение. С {@code null} и SQL-сравнения, и агрегаты такие выпуски пропускают.
+     */
     @Column(name = "ytm")
-    private double yieldToMaturity;
+    private Double yieldToMaturity;
 
-    private double duration;
-    private double convexity;
+    private Double duration;
+    private Double convexity;
 
     @Column(name = "coupon_frequency")
-    private int couponFrequency;
+    private Integer couponFrequency;
 
     @Column(name = "maturity_date")
     private LocalDate maturityDate;
@@ -57,17 +63,21 @@ public class Bond extends Instrument {
     @Column(name = "issuer_rating")
     private String issuerRating;
 
+    /** Оценка выводится из уровня листинга, а он известен не для всех выпусков. */
     @Column(name = "reliability_score")
-    private int reliabilityScore;
+    private Integer reliabilityScore;
 
-    @Column(name = "investment_grade")
+    @Column(name = "investment_grade", nullable = false)
     private boolean investmentGrade;
 
+    @Column(nullable = false)
     private boolean callable;
+
+    @Column(nullable = false)
     private boolean puttable;
 
     @Column(name = "list_level")
-    private int listLevel;
+    private Integer listLevel;
 
     /** Флаг аномальной доходности (сырьё MOEX иногда содержит YTM в сотни %). */
     @Column(name = "suspicious_yield", nullable = false)

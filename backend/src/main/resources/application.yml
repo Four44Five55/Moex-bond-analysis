@@ -38,6 +38,10 @@ spring:
   jackson:
     serialization:
       write-dates-as-timestamps: false
+      # Денежные суммы — BigDecimal. Без этого Jackson вправе вывести их в экспоненциальной
+      # форме (1.5E+7), а JSON.parse на фронте такое число прочитает, но в вёрстку оно
+      # попадёт как «1.5e+7». Плоская запись гарантирует обычные 15000000.00.
+      write-bigdecimal-as-plain: true
 
 # Настройки приложения
 app:

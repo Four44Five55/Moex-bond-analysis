@@ -2,10 +2,19 @@ package org.example.application.portfolio;
 
 import org.example.domain.model.Bond;
 import org.example.domain.model.Instrument;
+import org.example.domain.money.Money;
+
+import java.math.BigDecimal;
 
 /**
  * Приведение цен к деньгам на одну бумагу (₽). Для облигаций цена — % от номинала,
  * поэтому деньги = номинал × цена/100 (+ НКД для сделки); для акций — цена как есть.
+ * <p>
+ * Это граница между рыночными данными и учётом: на вход приходит котировка ({@code double} —
+ * величина по своей природе приблизительная), на выходе всегда {@link BigDecimal}, потому что
+ * дальше результат складывается в стоимость позиции, себестоимость и налоговую базу.
+ * Обратный переход — в {@code Money.toDouble}, и только там, где начинается аналитика
+ * (ряд стоимости, XIRR).
  */
 public final class InstrumentPricing {
 
@@ -13,19 +22,19 @@ public final class InstrumentPricing {
     }
 
     /** Стоимость одной бумаги при сделке (без комиссии), с учётом НКД для облигаций. */
-    public static double tradeMoneyPerUnit(Instrument instrument, double price, double aci) {
+    public static BigDecimal tradeMoneyPerUnit(Instrument instrument, BigDecimal price, BigDecimal aci) {
         if (instrument instanceof Bond bond) {
-            return bond.getFaceValue() * price / 100.0 + aci;
+            return faceShare(bond, price).add(Money.orZero(aci));
         }
-        return price;
+        return Money.orZero(price);
     }
 
     /** Текущая стоимость одной бумаги по последней цене MOEX (чистая, без НКД). */
-    public static double currentMoneyPerUnit(Instrument instrument) {
+    public static BigDecimal currentMoneyPerUnit(Instrument instrument) {
         if (instrument == null || instrument.getLastPrice() == null) {
-            return 0.0;
+            return Money.ZERO;
         }
-        return moneyPerUnit(instrument, instrument.getLastPrice());
+        return moneyPerUnit(instrument, Money.of(instrument.getLastPrice()));
     }
 
     /**
@@ -38,10 +47,10 @@ public final class InstrumentPricing {
      * <p>
      * У акций НКД нет, для них это та же цена.
      */
-    public static double currentPositionMoneyPerUnit(Instrument instrument) {
-        double clean = currentMoneyPerUnit(instrument);
-        if (clean > 0 && instrument instanceof Bond bond) {
-            return clean + bond.getAccruedInterest();
+    public static BigDecimal currentPositionMoneyPerUnit(Instrument instrument) {
+        BigDecimal clean = currentMoneyPerUnit(instrument);
+        if (Money.isPositive(clean) && instrument instanceof Bond bond) {
+            return clean.add(Money.of(bond.getAccruedInterest()));
         }
         return clean;
     }
@@ -51,10 +60,17 @@ public final class InstrumentPricing {
      * Котировки облигаций MOEX выражены в процентах от номинала — без этого перевода
      * облигационная часть портфеля усохнет в номинал раз.
      */
-    public static double moneyPerUnit(Instrument instrument, double price) {
+    public static BigDecimal moneyPerUnit(Instrument instrument, BigDecimal price) {
         if (instrument instanceof Bond bond) {
-            return bond.getFaceValue() * price / 100.0;
+            return faceShare(bond, price);
         }
-        return price;
+        return Money.orZero(price);
+    }
+
+    /** Доля номинала, соответствующая цене в процентах. */
+    private static BigDecimal faceShare(Bond bond, BigDecimal pricePercent) {
+        return Money.of(bond.getFaceValue())
+                .multiply(Money.orZero(pricePercent))
+                .divide(Money.HUNDRED, Money.CALC_SCALE, Money.ROUNDING);
     }
 }

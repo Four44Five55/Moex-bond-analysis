@@ -1,7 +1,9 @@
 package org.example.domain.portfolio.allocation;
 
+import org.example.domain.money.Money;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,17 +18,17 @@ import java.util.Map;
 public class AllocationCalculator {
 
     public List<AllocationSlice> breakdown(List<Holding> holdings) {
-        Map<String, Double> byCategory = new LinkedHashMap<>();
+        Map<String, BigDecimal> byCategory = new LinkedHashMap<>();
         for (Holding h : holdings) {
-            if (h.value() > 0) {
-                byCategory.merge(h.category(), h.value(), Double::sum);
+            if (Money.isPositive(h.value())) {
+                byCategory.merge(h.category(), h.value(), BigDecimal::add);
             }
         }
-        double total = byCategory.values().stream().mapToDouble(Double::doubleValue).sum();
+        BigDecimal total = Money.sum(byCategory.values());
         return byCategory.entrySet().stream()
-                .map(e -> new AllocationSlice(e.getKey(), e.getValue(),
-                        total > 0 ? e.getValue() / total * 100.0 : 0.0))
-                .sorted(Comparator.comparingDouble(AllocationSlice::value).reversed())
+                .map(e -> new AllocationSlice(e.getKey(), Money.round(e.getValue()),
+                        Money.percentOf(e.getValue(), total)))
+                .sorted(Comparator.comparing(AllocationSlice::value).reversed())
                 .toList();
     }
 }

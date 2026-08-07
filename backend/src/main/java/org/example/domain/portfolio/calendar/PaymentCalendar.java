@@ -1,5 +1,8 @@
 package org.example.domain.portfolio.calendar;
 
+import org.example.domain.money.Money;
+
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -16,16 +19,17 @@ import java.util.List;
  *                          а возврат вложенного, и в одну строку с купонами его сводить нельзя:
  *                          у портфеля с амортизируемыми выпусками он легко больше самих купонов
  */
-public record PaymentCalendar(List<PaymentCalendarMonth> months, double totalGross, double totalNet,
-                              double averageMonthlyNet, List<PaymentKindSlice> totalByKind,
-                              double principalReturn) {
+public record PaymentCalendar(List<PaymentCalendarMonth> months, BigDecimal totalGross,
+                              BigDecimal totalNet, BigDecimal averageMonthlyNet,
+                              List<PaymentKindSlice> totalByKind, BigDecimal principalReturn) {
 
     public static PaymentCalendar empty() {
-        return new PaymentCalendar(List.of(), 0, 0, 0, List.of(), 0);
+        return new PaymentCalendar(List.of(), Money.ZERO, Money.ZERO, Money.ZERO,
+                List.of(), Money.ZERO);
     }
 
     /** Доход за горизонт: всё, что придёт, минус возврат номинала. */
-    public double incomeGross() {
-        return totalGross - principalReturn;
+    public BigDecimal incomeGross() {
+        return totalGross.subtract(principalReturn);
     }
 }

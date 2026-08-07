@@ -1,8 +1,10 @@
 package org.example.domain.portfolio.deposit;
 
 import org.example.domain.model.Deposit;
+import org.example.domain.money.Money;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -23,7 +25,14 @@ import java.util.List;
 @Component
 public class DepositCalculator {
 
-    private static final double DAYS_PER_YEAR = 365.0;
+    private static final BigDecimal DAYS_PER_YEAR = Money.of("365");
+
+    /**
+     * Делитель формулы целиком: 100 (проценты) × 365 (дней в году). Одно деление на всю формулу
+     * вместо двух — меньше округлений в цепочке, а у капитализируемого вклада результат
+     * периода становится базой следующего, и ошибка иначе накапливалась бы от периода к периоду.
+     */
+    private static final BigDecimal RATE_DIVISOR = Money.HUNDRED.multiply(DAYS_PER_YEAR);
 
     /** Все начисления процентов за срок вклада, по возрастанию даты. */
     public List<InterestAccrual> schedule(Deposit deposit) {
@@ -34,7 +43,7 @@ public class DepositCalculator {
         }
 
         List<InterestAccrual> accruals = new ArrayList<>();
-        double base = deposit.getPrincipal();
+        BigDecimal base = deposit.getPrincipal();
         int step = deposit.getPayoutPeriod().months();
 
         while (periodStart.isBefore(maturity)) {
@@ -42,10 +51,10 @@ public class DepositCalculator {
             if (periodEnd.isAfter(maturity)) {
                 periodEnd = maturity;
             }
-            double amount = interest(base, deposit.getRatePct(), periodStart, periodEnd);
+            BigDecimal amount = interest(base, deposit.getRatePct(), periodStart, periodEnd);
             accruals.add(new InterestAccrual(periodEnd, amount, base));
             if (deposit.isCapitalized()) {
-                base += amount;
+                base = base.add(amount);
             }
             periodStart = periodEnd;
         }
@@ -62,7 +71,7 @@ public class DepositCalculator {
         if (!deposit.isCapitalized() || schedule.isEmpty()) {
             return schedule;
         }
-        double total = schedule.stream().mapToDouble(InterestAccrual::amount).sum();
+        BigDecimal total = sum(schedule);
         return List.of(new InterestAccrual(deposit.getMaturesOn(), total, deposit.getPrincipal()));
     }
 
@@ -72,44 +81,50 @@ public class DepositCalculator {
      *
      * @return 0 до даты открытия; после закрытия — стоимость на дату закрытия
      */
-    public double valueOn(Deposit deposit, LocalDate date) {
+    public BigDecimal valueOn(Deposit deposit, LocalDate date) {
         if (date.isBefore(deposit.getOpenedOn())) {
-            return 0.0;
+            return Money.ZERO;
         }
         LocalDate effective = date.isAfter(deposit.getMaturesOn()) ? deposit.getMaturesOn() : date;
 
-        double base = deposit.getPrincipal();
+        BigDecimal base = deposit.getPrincipal();
         LocalDate lastClosed = deposit.getOpenedOn();
         for (InterestAccrual accrual : schedule(deposit)) {
             if (accrual.date().isAfter(effective)) {
                 break;
             }
             if (deposit.isCapitalized()) {
-                base += accrual.amount();
+                base = base.add(accrual.amount());
             }
             lastClosed = accrual.date();
         }
-        return base + interest(base, deposit.getRatePct(), lastClosed, effective);
+        return base.add(interest(base, deposit.getRatePct(), lastClosed, effective));
     }
 
     /** Проценты за весь срок вклада. */
-    public double totalInterest(Deposit deposit) {
-        return schedule(deposit).stream().mapToDouble(InterestAccrual::amount).sum();
+    public BigDecimal totalInterest(Deposit deposit) {
+        return sum(schedule(deposit));
     }
 
     /** Проценты, которые владелец фактически получит в промежутке (from, to]. */
-    public double interestReceivedBetween(Deposit deposit, LocalDate from, LocalDate to) {
+    public BigDecimal interestReceivedBetween(Deposit deposit, LocalDate from, LocalDate to) {
         return payouts(deposit).stream()
                 .filter(a -> a.date().isAfter(from) && !a.date().isAfter(to))
-                .mapToDouble(InterestAccrual::amount)
-                .sum();
+                .map(InterestAccrual::amount)
+                .reduce(Money.ZERO, BigDecimal::add);
     }
 
-    private double interest(double base, double ratePct, LocalDate from, LocalDate to) {
+    private static BigDecimal sum(List<InterestAccrual> accruals) {
+        return accruals.stream().map(InterestAccrual::amount).reduce(Money.ZERO, BigDecimal::add);
+    }
+
+    private BigDecimal interest(BigDecimal base, BigDecimal ratePct, LocalDate from, LocalDate to) {
         long days = ChronoUnit.DAYS.between(from, to);
         if (days <= 0) {
-            return 0.0;
+            return Money.ZERO;
         }
-        return base * ratePct / 100.0 * days / DAYS_PER_YEAR;
+        return base.multiply(ratePct)
+                .multiply(Money.of(days))
+                .divide(RATE_DIVISOR, Money.CALC_SCALE, Money.ROUNDING);
     }
 }

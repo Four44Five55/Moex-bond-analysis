@@ -2,6 +2,7 @@ package org.example.web.dto.portfolio;
 
 import org.example.domain.model.PayoutPeriod;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -17,16 +18,16 @@ import java.time.LocalDate;
 public record DepositDto(
         Long id,
         String name,
-        double principal,
-        double ratePct,
+        BigDecimal principal,
+        BigDecimal ratePct,
         LocalDate openedOn,
         LocalDate maturesOn,
         boolean capitalized,
         PayoutPeriod payoutPeriod,
         String note,
-        double currentValue,
-        double accruedNotPaid,
-        double totalInterest,
+        BigDecimal currentValue,
+        BigDecimal accruedNotPaid,
+        BigDecimal totalInterest,
         LocalDate nextPayoutOn,
         boolean matured,
         Long sourceAccountId,

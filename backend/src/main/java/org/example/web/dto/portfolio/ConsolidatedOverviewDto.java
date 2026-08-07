@@ -2,6 +2,9 @@ package org.example.web.dto.portfolio;
 
 import org.example.domain.portfolio.deposit.DepositTaxBreakdown;
 
+import org.example.domain.money.Money;
+
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -26,15 +29,16 @@ public record ConsolidatedOverviewDto(
         List<IncomeEventDto> upcomingIncome,
         Double xirrPct,
         List<DepositDto> deposits,
-        double depositsValue,
-        double grandTotal,
+        BigDecimal depositsValue,
+        BigDecimal grandTotal,
         DepositTaxBreakdown depositTax
 ) {
 
     public static ConsolidatedOverviewDto empty() {
         return new ConsolidatedOverviewDto(
-                new PortfolioSummaryDto(0, 0, 0, 0, null, null, 0, 0, 0, 0, 0, 0, 0),
+                new PortfolioSummaryDto(Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, null, null,
+                        Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, 0),
                 List.of(), List.of(), List.of(), List.of(), null,
-                List.of(), 0, 0, DepositTaxBreakdown.zero());
+                List.of(), Money.ZERO, Money.ZERO, DepositTaxBreakdown.zero());
     }
 }

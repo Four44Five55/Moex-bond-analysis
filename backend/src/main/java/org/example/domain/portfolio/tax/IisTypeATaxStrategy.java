@@ -1,6 +1,9 @@
 package org.example.domain.portfolio.tax;
 
+import org.example.domain.money.Money;
 import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
 
 /**
  * ИИС тип А: доход облагается как на брокерском счёте, но ЛДВ не применяется
@@ -20,8 +23,8 @@ public class IisTypeATaxStrategy extends AbstractTaxStrategy {
     }
 
     @Override
-    protected double ldvExemptGain(TaxContext ctx) {
-        return 0.0;
+    protected BigDecimal ldvExemptGain(TaxContext ctx) {
+        return Money.ZERO;
     }
 
     @Override

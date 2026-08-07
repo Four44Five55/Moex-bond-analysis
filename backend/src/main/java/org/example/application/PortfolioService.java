@@ -2,6 +2,7 @@ package org.example.application;
 
 import org.example.application.portfolio.InstrumentPricing;
 import org.example.domain.model.*;
+import org.example.domain.money.Money;
 import org.example.domain.portfolio.*;
 import org.example.domain.portfolio.allocation.AllocationCalculator;
 import org.example.domain.portfolio.allocation.AllocationDimension;
@@ -47,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -136,8 +138,22 @@ public class PortfolioService {
         this.xirrCalculator = xirrCalculator;
     }
 
-    private record PositionView(Instrument instrument, String secId, double quantity,
-                                double openCost, double marketValue, double unrealizedPnl) {
+    private record PositionView(Instrument instrument, String secId, BigDecimal quantity,
+                                BigDecimal openCost, BigDecimal marketValue,
+                                BigDecimal unrealizedPnl) {
+    }
+
+    /**
+     * Прогноз дохода на 12 месяцев в разрезе, которого требует налог: купоны и дивиденды
+     * облагаются по разным правилам. Раньше это был {@code double[2]}, где смысл элемента
+     * держался на комментарии у места вызова, — с переходом на {@link BigDecimal} массив
+     * пришлось бы делать объектным, и именованные поля оказались и короче, и надёжнее.
+     */
+    private record ProjectedIncome(BigDecimal coupon, BigDecimal dividend) {
+
+        private BigDecimal total() {
+            return coupon.add(dividend);
+        }
     }
 
     /**
@@ -153,7 +169,7 @@ public class PortfolioService {
                             List<PricedTrade> pricedTrades,
                             List<CashMovement> cashMovements,
                             List<PositionView> positions,
-                            List<RealizedSale> realizedSales, double totalCommission) {
+                            List<RealizedSale> realizedSales, BigDecimal totalCommission) {
     }
 
     // --- Публичные операции ---
@@ -201,7 +217,7 @@ public class PortfolioService {
         boolean couponTaxable = isCouponTaxable(account);
 
         List<IncomeEvent> forecast = rawIncomeEvents(s);
-        double[] annual = projectedAnnualIncome(forecast);
+        ProjectedIncome annual = projectedAnnualIncome(forecast);
         TaxBreakdown tax = computeTax(account, s.realizedSales(), annual);
         List<IncomeEvent> realized = realizedIncomeEvents(s.transactions(), s.instruments());
 
@@ -258,31 +274,31 @@ public class PortfolioService {
             Snapshot s = snapshot(account);
             boolean couponTaxable = isCouponTaxable(account);
 
-            double accountInvested = s.positions().stream().mapToDouble(PositionView::openCost).sum();
-            double accountValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
+            BigDecimal accountInvested = Money.sum(s.positions(), PositionView::openCost);
+            BigDecimal accountValue = Money.sum(s.positions(), PositionView::marketValue);
 
             List<IncomeEvent> forecast = rawIncomeEvents(s);
-            double[] annual = projectedAnnualIncome(forecast);
+            ProjectedIncome annual = projectedAnnualIncome(forecast);
             List<IncomeEvent> realizedIncome = realizedIncomeEvents(s.transactions(), s.instruments());
 
-            totals.invested += accountInvested;
-            totals.marketValue += accountValue;
-            totals.realizedPnl += s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
-            totals.commission += s.totalCommission();
-            totals.receivedIncome += realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-            totals.projectedIncome += annual[0] + annual[1];
-            totals.tax += computeTax(account, s.realizedSales(), annual).totalTax();
+            totals.invested = totals.invested.add(accountInvested);
+            totals.marketValue = totals.marketValue.add(accountValue);
+            totals.realizedPnl = totals.realizedPnl.add(Money.sum(s.realizedSales(), RealizedSale::pnl));
+            totals.commission = totals.commission.add(s.totalCommission());
+            totals.receivedIncome = totals.receivedIncome.add(Money.sum(realizedIncome, IncomeEvent::gross));
+            totals.projectedIncome = totals.projectedIncome.add(annual.total());
+            totals.tax = totals.tax.add(computeTax(account, s.realizedSales(), annual).totalTax());
             totals.positions += s.positions().size();
 
-            double accountCash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome,
+            BigDecimal accountCash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome,
                     depositsFundedFrom(deposits, account.getId()));
-            totals.cashBalance += accountCash;
+            totals.cashBalance = totals.cashBalance.add(accountCash);
             totals.addExternal(externalIn(s.cashMovements()), !s.transactions().isEmpty());
 
             lines.add(toAccountLine(account, s, accountInvested, accountValue, accountCash));
             // В разрезе по счетам показываем весь капитал счёта, включая непристроенные деньги
-            double accountCapital = accountValue + Math.max(accountCash, 0);
-            if (accountCapital > 0) {
+            BigDecimal accountCapital = accountValue.add(Money.atLeastZero(accountCash));
+            if (Money.isPositive(accountCapital)) {
                 accountHoldings.add(new Holding(account.getName(), accountCapital));
             }
             for (PositionView p : s.positions()) {
@@ -293,11 +309,11 @@ public class PortfolioService {
         }
 
         LocalDate today = LocalDate.now();
-        double depositsValue = 0;
+        BigDecimal depositsValue = Money.ZERO;
         for (Deposit deposit : deposits) {
-            double value = depositCalculator.valueOn(deposit, today);
-            depositsValue += value;
-            if (value > 0) {
+            BigDecimal value = depositCalculator.valueOn(deposit, today);
+            depositsValue = depositsValue.add(value);
+            if (Money.isPositive(value)) {
                 accountHoldings.add(new Holding(deposit.getName(), value));
             }
             upcoming.addAll(upcomingInterest(deposit, today));
@@ -309,16 +325,16 @@ public class PortfolioService {
             }
         }
 
-        if (totals.cashBalance > 0) {
+        if (Money.isPositive(totals.cashBalance)) {
             typeHoldings.add(new Holding("Свободные деньги", totals.cashBalance));
         }
-        if (depositsValue > 0) {
+        if (Money.isPositive(depositsValue)) {
             typeHoldings.add(new Holding("Вклады", depositsValue));
         }
 
-        double grandTotal = totals.totalValue() + depositsValue;
-        if (grandTotal > 0) {
-            flows.add(new CashFlow(today, grandTotal));
+        BigDecimal grandTotal = totals.totalValue().add(depositsValue);
+        if (Money.isPositive(grandTotal)) {
+            flows.add(new CashFlow(today, Money.toDouble(grandTotal)));
         }
         Double xirr = xirrCalculator.compute(flows);
         upcoming.sort(Comparator.comparing(IncomeEventDto::date));
@@ -326,7 +342,7 @@ public class PortfolioService {
         return new ConsolidatedOverviewDto(totals.toDto(grandTotal), lines,
                 toSlices(accountHoldings), toSlices(typeHoldings), upcoming,
                 xirr == null ? null : xirr * 100.0,
-                depositService.list(clientId), depositsValue, grandTotal,
+                depositService.list(clientId), Money.round(depositsValue), Money.round(grandTotal),
                 depositTax(deposits, today));
     }
 
@@ -399,7 +415,7 @@ public class PortfolioService {
         return depositCalculator.payouts(deposit).stream()
                 .filter(a -> !a.date().isBefore(today))
                 .map(a -> new IncomeEventDto(a.date(), null, null, IncomeKind.INTEREST,
-                        a.amount(), a.amount(), false, deposit.getName()))
+                        Money.round(a.amount()), Money.round(a.amount()), false, deposit.getName()))
                 .toList();
     }
 
@@ -418,12 +434,13 @@ public class PortfolioService {
     private List<CashFlow> depositFlows(Deposit deposit, LocalDate today) {
         List<CashFlow> flows = new ArrayList<>();
         if (deposit.getSourceAccountId() == null) {
-            flows.add(new CashFlow(deposit.getOpenedOn(), -deposit.getPrincipal()));
+            flows.add(new CashFlow(deposit.getOpenedOn(),
+                    -Money.toDouble(deposit.getPrincipal())));
         }
         if (!deposit.isCapitalized()) {
             depositCalculator.payouts(deposit).stream()
                     .filter(a -> !a.date().isAfter(today))
-                    .forEach(a -> flows.add(new CashFlow(a.date(), a.amount())));
+                    .forEach(a -> flows.add(new CashFlow(a.date(), Money.toDouble(a.amount()))));
         }
         return flows;
     }
@@ -435,24 +452,27 @@ public class PortfolioService {
         }
         LocalDate yearStart = today.withDayOfYear(1).minusDays(1);
         LocalDate yearEnd = today.withDayOfYear(today.lengthOfYear());
-        double interest = deposits.stream()
-                .mapToDouble(d -> depositCalculator.interestReceivedBetween(d, yearStart, yearEnd))
-                .sum();
-        return depositTaxCalculator.compute(interest, keyRateService.maxForYear(today.getYear()));
+        BigDecimal interest = deposits.stream()
+                .map(d -> depositCalculator.interestReceivedBetween(d, yearStart, yearEnd))
+                .reduce(Money.ZERO, BigDecimal::add);
+        // Ставка ЦБ приходит из внешнего источника числом с двумя знаками (14.25) — на границе
+        // с денежным расчётом переводим её в точное десятичное представление
+        BigDecimal keyRate = Money.of(keyRateService.maxForYear(today.getYear()));
+        return depositTaxCalculator.compute(interest, keyRate);
     }
 
     /** Накопитель сумм по счетам — иначе метод свёлся бы к десятку скачущих локальных переменных. */
     private static final class Totals {
-        private double invested;
-        private double marketValue;
-        private double cashBalance;
-        private double realizedPnl;
-        private double commission;
-        private double receivedIncome;
-        private double projectedIncome;
-        private double tax;
+        private BigDecimal invested = Money.ZERO;
+        private BigDecimal marketValue = Money.ZERO;
+        private BigDecimal cashBalance = Money.ZERO;
+        private BigDecimal realizedPnl = Money.ZERO;
+        private BigDecimal commission = Money.ZERO;
+        private BigDecimal receivedIncome = Money.ZERO;
+        private BigDecimal projectedIncome = Money.ZERO;
+        private BigDecimal tax = Money.ZERO;
         private int positions;
-        private double externalIn;
+        private BigDecimal externalIn = Money.ZERO;
         /** Хоть один счёт с бумагами, но без учёта денег — и общая сумма внесённого уже не сумма. */
         private boolean externalComplete = true;
 
@@ -461,36 +481,42 @@ public class PortfolioService {
          * @param hasMoney есть ли по источнику вообще что считать: пустой счёт без сделок
          *                 и без движений итог не портит
          */
-        private void addExternal(Double amount, boolean hasMoney) {
+        private void addExternal(BigDecimal amount, boolean hasMoney) {
             if (amount != null) {
-                externalIn += amount;
+                externalIn = externalIn.add(amount);
             } else if (hasMoney) {
                 externalComplete = false;
             }
         }
 
-        private double totalValue() {
-            return marketValue + cashBalance;
+        private BigDecimal totalValue() {
+            return marketValue.add(cashBalance);
         }
 
         /** @param grandTotal весь капитал клиента вместе с вкладами — прибыль считается от него */
-        private PortfolioSummaryDto toDto(double grandTotal) {
-            Double external = externalComplete ? externalIn : null;
-            Double profit = external == null ? null : grandTotal - external;
-            return new PortfolioSummaryDto(invested, marketValue, cashBalance, totalValue(),
-                    external, profit,
-                    marketValue - invested, realizedPnl,
-                    commission, receivedIncome, projectedIncome, tax, positions);
+        private PortfolioSummaryDto toDto(BigDecimal grandTotal) {
+            BigDecimal external = externalComplete ? externalIn : null;
+            BigDecimal profit = external == null ? null : grandTotal.subtract(external);
+            return new PortfolioSummaryDto(
+                    Money.round(invested), Money.round(marketValue), Money.round(cashBalance),
+                    Money.round(totalValue()),
+                    external == null ? null : Money.round(external),
+                    profit == null ? null : Money.round(profit),
+                    Money.round(marketValue.subtract(invested)), Money.round(realizedPnl),
+                    Money.round(commission), Money.round(receivedIncome),
+                    Money.round(projectedIncome), Money.round(tax), positions);
         }
     }
 
-    private AccountLineDto toAccountLine(Account account, Snapshot s, double invested,
-                                         double marketValue, double cash) {
-        double pnl = marketValue - invested;
+    private AccountLineDto toAccountLine(Account account, Snapshot s, BigDecimal invested,
+                                         BigDecimal marketValue, BigDecimal cash) {
+        BigDecimal pnl = marketValue.subtract(invested);
         return new AccountLineDto(account.getId(), account.getName(), account.getType(),
-                account.getIisType(), invested, marketValue, cash, marketValue + cash, pnl,
-                invested > 0 ? pnl / invested * 100.0 : 0.0, s.positions().size());
+                account.getIisType(), Money.round(invested), Money.round(marketValue),
+                Money.round(cash), Money.round(marketValue.add(cash)), Money.round(pnl),
+                Money.percentOf(pnl, invested), s.positions().size());
     }
+
 
     /**
      * Дневной ряд стоимости портфеля за последние {@code months} месяцев и XIRR.
@@ -535,8 +561,9 @@ public class PortfolioService {
         List<CashMovement> movements = cashMovementRepository
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
         double positionsValue = series.isEmpty() ? 0.0 : series.get(series.size() - 1).value();
-        double terminal = positionsValue + freeCash(movements, pricedTrades(txns, instruments),
+        BigDecimal cash = freeCash(movements, pricedTrades(txns, instruments),
                 realizedIncomeEvents(txns, instruments), fundedDeposits(account));
+        double terminal = positionsValue + Money.toDouble(cash);
         Double xirr = computeXirr(capitalFlows(txns, instruments, movements), terminal, to);
 
         return new PortfolioHistoryDto(
@@ -551,11 +578,13 @@ public class PortfolioService {
     }
 
     private List<DatedTrade> toDatedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
+        // Граница с аналитикой: дневной ряд стоимости строится по свечам, то есть в double
         return txns.stream()
-                .map(t -> new DatedTrade(t.getSecId(), t.getSide(), t.getTradeDate(), t.getQuantity(),
-                        InstrumentPricing.tradeMoneyPerUnit(instruments.get(t.getSecId()),
-                                t.getPrice(), t.getAci()),
-                        t.getCommission()))
+                .map(t -> new DatedTrade(t.getSecId(), t.getSide(), t.getTradeDate(),
+                        Money.toDouble(t.getQuantity()),
+                        Money.toDouble(InstrumentPricing.tradeMoneyPerUnit(
+                                instruments.get(t.getSecId()), t.getPrice(), t.getAci())),
+                        Money.toDouble(t.getCommission())))
                 .toList();
     }
 
@@ -579,13 +608,14 @@ public class PortfolioService {
             for (var candle : candleService.getCandles(secId, DAILY_INTERVAL, priceFrom, to)) {
                 LocalDate date = Instant.ofEpochSecond(candle.time())
                         .atZone(ZoneOffset.UTC).toLocalDate();
-                closes.put(date, InstrumentPricing.moneyPerUnit(instrument, candle.close()));
+                closes.put(date, Money.toDouble(
+                        InstrumentPricing.moneyPerUnit(instrument, Money.of(candle.close()))));
             }
         } catch (RuntimeException e) {
             log.warn("История цен по {} недоступна: {}", secId, e.getMessage());
         }
         if (closes.isEmpty()) {
-            double lastKnown = InstrumentPricing.currentMoneyPerUnit(instrument);
+            double lastKnown = Money.toDouble(InstrumentPricing.currentMoneyPerUnit(instrument));
             if (lastKnown > 0) {
                 log.warn("Свечей по {} нет, в ряду стоимости бумага пойдёт по последней цене", secId);
                 closes.put(priceFrom, lastKnown);
@@ -620,7 +650,7 @@ public class PortfolioService {
             return tradeAndIncomeFlows(txns, instruments);
         }
         return movements.stream()
-                .map(m -> new CashFlow(m.getMovedOn(), -m.signedAmount()))
+                .map(m -> new CashFlow(m.getMovedOn(), -Money.toDouble(m.signedAmount())))
                 .toList();
     }
 
@@ -631,29 +661,29 @@ public class PortfolioService {
      * @param fundedDeposits тело вкладов, открытых деньгами этого счёта: они со счёта ушли
      *                       и теперь лежат во вкладе, где их и показывает сводка
      */
-    private double freeCash(List<CashMovement> movements, List<PricedTrade> trades,
-                            List<IncomeEvent> receivedIncome, double fundedDeposits) {
-        double externalNet = movements.stream().mapToDouble(CashMovement::signedAmount).sum();
-        double received = receivedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-        double balance = cashBalanceCalculator
+    private BigDecimal freeCash(List<CashMovement> movements, List<PricedTrade> trades,
+                                List<IncomeEvent> receivedIncome, BigDecimal fundedDeposits) {
+        BigDecimal externalNet = Money.sum(movements, CashMovement::signedAmount);
+        BigDecimal received = Money.sum(receivedIncome, IncomeEvent::gross);
+        BigDecimal balance = cashBalanceCalculator
                 .reportedBalance(!movements.isEmpty(), externalNet, trades, received);
-        return movements.isEmpty() ? balance : balance - fundedDeposits;
+        return movements.isEmpty() ? balance : balance.subtract(fundedDeposits);
     }
 
     /**
      * Тело вкладов, открытых деньгами этого счёта. Отдельный запрос — вклады привязаны к клиенту,
      * а не к счёту, и в снапшот счёта они не попадают.
      */
-    private double fundedDeposits(Account account) {
+    private BigDecimal fundedDeposits(Account account) {
         return depositsFundedFrom(depositService.entities(account.getClientId()), account.getId());
     }
 
     /** Тело вкладов, открытых деньгами конкретного счёта. */
-    private static double depositsFundedFrom(List<Deposit> deposits, Long accountId) {
+    private static BigDecimal depositsFundedFrom(List<Deposit> deposits, Long accountId) {
         return deposits.stream()
                 .filter(d -> accountId.equals(d.getSourceAccountId()))
-                .mapToDouble(Deposit::getPrincipal)
-                .sum();
+                .map(Deposit::getPrincipal)
+                .reduce(Money.ZERO, BigDecimal::add);
     }
 
     private List<PricedTrade> pricedTrades(List<Transaction> txns, Map<String, Instrument> instruments) {
@@ -675,13 +705,16 @@ public class PortfolioService {
                                                Map<String, Instrument> instruments) {
         List<CashFlow> flows = new ArrayList<>();
         for (Transaction t : txns) {
-            double money = t.getQuantity() * InstrumentPricing.tradeMoneyPerUnit(
-                    instruments.get(t.getSecId()), t.getPrice(), t.getAci());
-            flows.add(new CashFlow(t.getTradeDate(), t.getSide() == TradeSide.BUY
-                    ? -(money + t.getCommission())
-                    : money - t.getCommission()));
+            BigDecimal money = InstrumentPricing
+                    .tradeMoneyPerUnit(instruments.get(t.getSecId()), t.getPrice(), t.getAci())
+                    .multiply(t.getQuantity());
+            BigDecimal signed = t.getSide() == TradeSide.BUY
+                    ? money.add(t.getCommission()).negate()
+                    : money.subtract(t.getCommission());
+            flows.add(new CashFlow(t.getTradeDate(), Money.toDouble(signed)));
         }
-        realizedIncomeEvents(txns, instruments).forEach(e -> flows.add(new CashFlow(e.date(), e.gross())));
+        realizedIncomeEvents(txns, instruments)
+                .forEach(e -> flows.add(new CashFlow(e.date(), Money.toDouble(e.gross()))));
         return flows;
     }
 
@@ -690,27 +723,33 @@ public class PortfolioService {
         Snapshot s = snapshot(account);
 
         // Прогноз считается один раз и переиспользуется в налоге — обход выплат ходит во внешний источник
-        double[] annual = projectedAnnualIncome(rawIncomeEvents(s));
-        double estimatedTax = computeTax(account, s.realizedSales(), annual).totalTax();
+        ProjectedIncome annual = projectedAnnualIncome(rawIncomeEvents(s));
+        BigDecimal estimatedTax = computeTax(account, s.realizedSales(), annual).totalTax();
         return summaryOf(s, annual, estimatedTax,
                 realizedIncomeEvents(s.transactions(), s.instruments()));
     }
 
-    private PortfolioSummaryDto summaryOf(Snapshot s, double[] annual, double estimatedTax,
+    private PortfolioSummaryDto summaryOf(Snapshot s, ProjectedIncome annual,
+                                          BigDecimal estimatedTax,
                                           List<IncomeEvent> realizedIncome) {
-        double invested = s.positions().stream().mapToDouble(PositionView::openCost).sum();
-        double marketValue = s.positions().stream().mapToDouble(PositionView::marketValue).sum();
-        double realized = s.realizedSales().stream().mapToDouble(RealizedSale::pnl).sum();
-        double receivedIncome = realizedIncome.stream().mapToDouble(IncomeEvent::gross).sum();
-        double cash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome,
+        BigDecimal invested = Money.sum(s.positions(), PositionView::openCost);
+        BigDecimal marketValue = Money.sum(s.positions(), PositionView::marketValue);
+        BigDecimal realized = Money.sum(s.realizedSales(), RealizedSale::pnl);
+        BigDecimal receivedIncome = Money.sum(realizedIncome, IncomeEvent::gross);
+        BigDecimal cash = freeCash(s.cashMovements(), s.pricedTrades(), realizedIncome,
                 fundedDeposits(s.account()));
-        double totalValue = marketValue + cash;
+        BigDecimal totalValue = marketValue.add(cash);
 
-        Double externalIn = externalIn(s.cashMovements());
-        return new PortfolioSummaryDto(invested, marketValue, cash, totalValue,
-                externalIn, profitOver(totalValue, externalIn),
-                marketValue - invested, realized,
-                s.totalCommission(), receivedIncome, annual[0] + annual[1], estimatedTax,
+        BigDecimal externalIn = externalIn(s.cashMovements());
+        BigDecimal profit = profitOver(totalValue, externalIn);
+        return new PortfolioSummaryDto(
+                Money.round(invested), Money.round(marketValue), Money.round(cash),
+                Money.round(totalValue),
+                externalIn == null ? null : Money.round(externalIn),
+                profit == null ? null : Money.round(profit),
+                Money.round(marketValue.subtract(invested)), Money.round(realized),
+                Money.round(s.totalCommission()), Money.round(receivedIncome),
+                Money.round(annual.total()), Money.round(estimatedTax),
                 s.positions().size());
     }
 
@@ -718,9 +757,8 @@ public class PortfolioService {
      * Внесено извне: пополнения минус выводы. {@code null}, если движений нет вовсе — тогда
      * неизвестно не «ноль», а именно «неизвестно», и прибыль от такой базы считать нельзя.
      */
-    private static Double externalIn(List<CashMovement> movements) {
-        return movements.isEmpty() ? null
-                : movements.stream().mapToDouble(CashMovement::signedAmount).sum();
+    private static BigDecimal externalIn(List<CashMovement> movements) {
+        return movements.isEmpty() ? null : Money.sum(movements, CashMovement::signedAmount);
     }
 
     /**
@@ -730,8 +768,8 @@ public class PortfolioService {
      * ничего дважды: реинвестированный купон уже сидит и в себестоимости позиций, и в их
      * рыночной стоимости, поэтому «вложено + получено» капиталом не является.
      */
-    private static Double profitOver(double totalValue, Double externalIn) {
-        return externalIn == null ? null : totalValue - externalIn;
+    private static BigDecimal profitOver(BigDecimal totalValue, BigDecimal externalIn) {
+        return externalIn == null ? null : totalValue.subtract(externalIn);
     }
 
     // --- Ядро расчёта ---
@@ -740,7 +778,7 @@ public class PortfolioService {
         List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
         List<CashMovement> movements = cashMovementRepository
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
-        double totalCommission = txns.stream().mapToDouble(Transaction::getCommission).sum();
+        BigDecimal totalCommission = Money.sum(txns, Transaction::getCommission);
 
         Map<String, List<Transaction>> bySec = groupBySecId(txns);
         Map<String, Instrument> instruments = loadInstruments(txns);
@@ -759,13 +797,14 @@ public class PortfolioService {
             FifoResult fifo = fifoCalculator.process(priced);
             realized.addAll(fifo.realizedSales());
 
-            double qty = fifo.openQuantity();
-            if (qty > 1e-9) {
-                double openCost = fifo.openCost();
+            BigDecimal qty = fifo.openQuantity();
+            if (Money.isPositive(qty)) {
+                BigDecimal openCost = fifo.openCost();
                 // Грязная цена: себестоимость лота уже содержит уплаченный НКД
-                double marketValue = InstrumentPricing.currentPositionMoneyPerUnit(inst) * qty;
+                BigDecimal marketValue = InstrumentPricing
+                        .currentPositionMoneyPerUnit(inst).multiply(qty);
                 positions.add(new PositionView(inst, entry.getKey(), qty, openCost,
-                        marketValue, marketValue - openCost));
+                        marketValue, marketValue.subtract(openCost)));
             }
         }
         return new Snapshot(account, txns, instruments, pricedTrades(txns, instruments), movements,
@@ -822,18 +861,20 @@ public class PortfolioService {
         if (date == null || !date.isBefore(today)) {
             return; // только прошедшие выплаты
         }
-        double qty = quantityAsOf(txns, date);
-        if (qty > 1e-9) {
-            events.add(new IncomeEvent(date, secId, kind, perUnit * qty, false));
+        BigDecimal qty = quantityAsOf(txns, date);
+        if (Money.isPositive(qty)) {
+            events.add(new IncomeEvent(date, secId, kind, Money.of(perUnit).multiply(qty), false));
         }
     }
 
     /** Количество бумаг на конец дня {@code date} по истории сделок (BUY − SELL, tradeDate ≤ date). */
-    private double quantityAsOf(List<Transaction> txns, LocalDate date) {
-        double qty = 0;
+    private BigDecimal quantityAsOf(List<Transaction> txns, LocalDate date) {
+        BigDecimal qty = Money.ZERO;
         for (Transaction t : txns) {
             if (!t.getTradeDate().isAfter(date)) {
-                qty += t.getSide() == TradeSide.BUY ? t.getQuantity() : -t.getQuantity();
+                qty = t.getSide() == TradeSide.BUY
+                        ? qty.add(t.getQuantity())
+                        : qty.subtract(t.getQuantity());
             }
         }
         return qty;
@@ -861,41 +902,46 @@ public class PortfolioService {
         return events;
     }
 
-    /** @return [couponGross, dividendGross] за ближайшие 12 месяцев (амортизации не входят в доход). */
-    private double[] projectedAnnualIncome(List<IncomeEvent> events) {
+    /** Купоны и дивиденды за ближайшие 12 месяцев (амортизации не входят в доход). */
+    private ProjectedIncome projectedAnnualIncome(List<IncomeEvent> events) {
         LocalDate from = LocalDate.now();
         LocalDate to = from.plusMonths(PROJECTION_MONTHS);
-        double coupon = 0, dividend = 0;
+        BigDecimal coupon = Money.ZERO;
+        BigDecimal dividend = Money.ZERO;
         for (IncomeEvent e : events) {
             if (e.date().isBefore(from) || e.date().isAfter(to)) {
                 continue;
             }
             if (e.kind() == IncomeKind.COUPON) {
-                coupon += e.gross();
+                coupon = coupon.add(e.gross());
             } else if (e.kind() == IncomeKind.DIVIDEND) {
-                dividend += e.gross();
+                dividend = dividend.add(e.gross());
             }
         }
-        return new double[]{coupon, dividend};
+        return new ProjectedIncome(coupon, dividend);
     }
 
-    /** @param annual [couponGross, dividendGross] — считается вызывающим, чтобы не обходить выплаты дважды. */
-    private TaxBreakdown computeTax(Account account, List<RealizedSale> sales, double[] annual) {
-        TaxContext ctx = new TaxContext(account, sales, annual[0], annual[1]);
+    /** @param annual считается вызывающим, чтобы не обходить выплаты дважды. */
+    private TaxBreakdown computeTax(Account account, List<RealizedSale> sales,
+                                    ProjectedIncome annual) {
+        TaxContext ctx = new TaxContext(account, sales, annual.coupon(), annual.dividend());
         return taxStrategyFactory.forAccount(account).compute(ctx);
     }
 
     // --- Мапперы ---
 
     private PositionDto toDto(PositionView p) {
-        double avgCost = p.quantity() > 0 ? p.openCost() / p.quantity() : 0;
-        double currentPrice = p.instrument() != null && p.instrument().getLastPrice() != null
-                ? p.instrument().getLastPrice() : 0;
-        double unrealizedPct = p.openCost() > 0 ? p.unrealizedPnl() / p.openCost() * 100.0 : 0;
+        BigDecimal avgCost = Money.isPositive(p.quantity())
+                ? Money.roundUnit(Money.divide(p.openCost(), p.quantity()))
+                : Money.ZERO;
+        BigDecimal currentPrice = p.instrument() == null
+                ? Money.ZERO
+                : Money.of(p.instrument().getLastPrice());
         InstrumentType type = p.instrument() != null ? p.instrument().getType() : null;
         String name = p.instrument() != null ? p.instrument().getShortName() : p.secId();
-        return new PositionDto(p.secId(), type, name, p.quantity(), avgCost, p.openCost(),
-                currentPrice, p.marketValue(), p.unrealizedPnl(), unrealizedPct);
+        return new PositionDto(p.secId(), type, name, p.quantity(), avgCost,
+                Money.round(p.openCost()), currentPrice, Money.round(p.marketValue()),
+                Money.round(p.unrealizedPnl()), Money.percentOf(p.unrealizedPnl(), p.openCost()));
     }
 
     /** Полученные выплаты — новыми вперёд. */
@@ -916,16 +962,21 @@ public class PortfolioService {
 
     private IncomeEventDto toIncomeDto(IncomeEvent e, Account account, boolean couponTaxable,
                                        Map<String, Instrument> instruments) {
-        double net = switch (e.kind()) {
+        BigDecimal net = switch (e.kind()) {
             case AMORTIZATION -> e.gross();  // возврат тела долга, не доход
             // Проценты вкладов сюда не попадают (у них свой путь), но ветка обязана существовать:
             // налог по ним считается от годовой суммы всех вкладов, а не с отдельной выплаты
             case INTEREST -> e.gross();
-            case COUPON -> couponTaxable ? e.gross() * (1 - account.getBaseTaxRate() / 100.0) : e.gross();
-            case DIVIDEND -> e.gross() * (1 - TaxRates.DIVIDEND_PCT / 100.0);
+            case COUPON -> couponTaxable ? afterTax(e.gross(), account.getBaseTaxRate()) : e.gross();
+            case DIVIDEND -> afterTax(e.gross(), TaxRates.DIVIDEND_PCT);
         };
         return new IncomeEventDto(e.date(), e.secId(), nameOf(instruments, e.secId()), e.kind(),
-                e.gross(), net, e.estimate(), account.getName());
+                Money.round(e.gross()), Money.round(net), e.estimate(), account.getName());
+    }
+
+    /** Выплата «на руки»: сумма минус НДФЛ по ставке. */
+    private static BigDecimal afterTax(BigDecimal gross, BigDecimal ratePct) {
+        return gross.subtract(Money.pct(gross, ratePct));
     }
 
     private boolean isCouponTaxable(Account account) {

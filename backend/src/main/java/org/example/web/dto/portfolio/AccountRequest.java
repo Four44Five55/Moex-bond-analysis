@@ -6,12 +6,14 @@ import jakarta.validation.constraints.PositiveOrZero;
 import org.example.domain.model.AccountType;
 import org.example.domain.model.IisType;
 
+import java.math.BigDecimal;
+
 /** Создание/обновление счёта. iisType обязателен только для type = IIS. */
 public record AccountRequest(
         @NotBlank String name,
         @NotNull AccountType type,
         IisType iisType,
-        @PositiveOrZero double defaultCommissionPct,
-        @PositiveOrZero double baseTaxRate
+        @PositiveOrZero BigDecimal defaultCommissionPct,
+        @PositiveOrZero BigDecimal baseTaxRate
 ) {
 }

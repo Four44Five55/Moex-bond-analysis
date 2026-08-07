@@ -1,5 +1,9 @@
 package org.example.domain.portfolio.tax;
 
+import org.example.domain.money.Money;
+
+import java.math.BigDecimal;
+
 /**
  * Ставки НДФЛ — единственный источник истины. Нужны и стратегиям налога, и оценке выплат
  * «на руки» в доходном календаре: раньше календарь держал собственную копию 13%,
@@ -8,20 +12,20 @@ package org.example.domain.portfolio.tax;
 public final class TaxRates {
 
     /** Дивиденды резидента РФ облагаются фиксированно и не зависят от типа счёта, включая ИИС. */
-    public static final double DIVIDEND_PCT = 13.0;
+    public static final BigDecimal DIVIDEND_PCT = Money.of("13.00");
 
     /** База сверх этого порога облагается по повышенной ставке. */
-    public static final double PROGRESSIVE_THRESHOLD = 5_000_000.0;
+    public static final BigDecimal PROGRESSIVE_THRESHOLD = Money.of("5000000.00");
 
-    public static final double HIGH_PCT = 15.0;
+    public static final BigDecimal HIGH_PCT = Money.of("15.00");
 
-    public static final double BASE_PCT = 13.0;
+    public static final BigDecimal BASE_PCT = Money.of("13.00");
 
     /**
      * База необлагаемого вычета по процентам вкладов: 1 млн ₽ × максимальная ключевая ставка
      * за год. Сама ставка задаётся конфигурацией — источника в MOEX ISS для неё нет.
      */
-    public static final double DEPOSIT_DEDUCTION_BASE = 1_000_000.0;
+    public static final BigDecimal DEPOSIT_DEDUCTION_BASE = Money.of("1000000.00");
 
     private TaxRates() {
     }

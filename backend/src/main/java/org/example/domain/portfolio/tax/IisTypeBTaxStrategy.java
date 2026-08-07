@@ -1,6 +1,9 @@
 package org.example.domain.portfolio.tax;
 
+import org.example.domain.money.Money;
 import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
 
 /**
  * ИИС тип Б: прибыль от продаж и купоны освобождены от НДФЛ; дивиденды облагаются 13%.
@@ -19,8 +22,8 @@ public class IisTypeBTaxStrategy extends AbstractTaxStrategy {
     }
 
     @Override
-    protected double ldvExemptGain(TaxContext ctx) {
-        return 0.0;
+    protected BigDecimal ldvExemptGain(TaxContext ctx) {
+        return Money.ZERO;
     }
 
     @Override

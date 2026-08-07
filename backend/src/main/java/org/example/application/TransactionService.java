@@ -6,6 +6,7 @@ import org.example.domain.model.Account;
 import org.example.domain.model.Bond;
 import org.example.domain.model.Instrument;
 import org.example.domain.model.Transaction;
+import org.example.domain.money.Money;
 import org.example.domain.port.BondHistoryProvider;
 import org.example.infrastructure.persistence.InstrumentRepository;
 import org.example.infrastructure.persistence.TransactionRepository;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -69,11 +71,12 @@ public class TransactionService {
                 .orElseThrow(() -> new NotFoundException("Инструмент не найден: " + req.secId()));
 
         // Комиссия считается от полного объёма сделки, включая НКД: брокер берёт её с оборота
-        double notional = InstrumentPricing.tradeMoneyPerUnit(instrument, req.price(), req.aci())
-                * req.quantity();
-        double commission = req.commission() != null
+        BigDecimal notional = InstrumentPricing
+                .tradeMoneyPerUnit(instrument, req.price(), Money.orZero(req.aci()))
+                .multiply(req.quantity());
+        BigDecimal commission = req.commission() != null
                 ? req.commission()
-                : notional * account.getDefaultCommissionPct() / 100.0;
+                : Money.round(Money.pct(notional, account.getDefaultCommissionPct()));
 
         Transaction txn = new Transaction();
         txn.setAccountId(accountId);
@@ -82,7 +85,7 @@ public class TransactionService {
         txn.setTradeDate(req.tradeDate());
         txn.setQuantity(req.quantity());
         txn.setPrice(req.price());
-        txn.setAci(req.aci());
+        txn.setAci(Money.orZero(req.aci()));   // у акций НКД нет — поле необязательное
         txn.setCommission(commission);
         txn.setNote(req.note());
         return TransactionDto.from(transactionRepository.save(txn), shortName(instrument));
@@ -113,10 +116,10 @@ public class TransactionService {
         List<AciBackfillDto.Row> rows = new ArrayList<>();
         int candidates = 0;
         int unknown = 0;
-        double costDelta = 0;
+        BigDecimal costDelta = Money.ZERO;
 
         for (Transaction txn : txns) {
-            if (txn.getAci() != 0 || !(instruments.get(txn.getSecId()) instanceof Bond)) {
+            if (!Money.isZero(txn.getAci()) || !(instruments.get(txn.getSecId()) instanceof Bond)) {
                 continue;
             }
             candidates++;
@@ -125,19 +128,21 @@ public class TransactionService {
                 unknown++;
                 continue;
             }
-            double amount = aci.perBond() * txn.getQuantity();
-            costDelta += amount;
+            BigDecimal perBond = Money.roundUnit(Money.of(aci.perBond()));
+            BigDecimal amount = perBond.multiply(txn.getQuantity());
+            costDelta = costDelta.add(amount);
             rows.add(new AciBackfillDto.Row(txn.getId(), txn.getSecId(),
                     shortName(instruments.get(txn.getSecId())), txn.getTradeDate(),
-                    txn.getSide().name(), txn.getQuantity(), aci.perBond(), aci.tradeDate(), amount));
+                    txn.getSide().name(), txn.getQuantity(), perBond, aci.tradeDate(),
+                    Money.round(amount)));
             if (!dryRun) {
-                txn.setAci(aci.perBond());
+                txn.setAci(perBond);
             }
         }
         if (!dryRun && !rows.isEmpty()) {
             log.info("Счёт {}: НКД дозаполнен в {} сделках на {} ₽", accountId, rows.size(), costDelta);
         }
-        return new AciBackfillDto(dryRun, candidates, rows.size(), unknown, costDelta, rows);
+        return new AciBackfillDto(dryRun, candidates, rows.size(), unknown, Money.round(costDelta), rows);
     }
 
     /** Сбой биржи по одной сделке не должен ронять весь пересчёт. */

@@ -3,7 +3,9 @@ package org.example.domain.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.domain.money.Money;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
@@ -39,12 +41,12 @@ public class Deposit {
     private String name;
 
     /** Сумма вклада, ₽. */
-    @Column(nullable = false)
-    private double principal;
+    @Column(nullable = false, precision = 19, scale = 2)
+    private BigDecimal principal = Money.ZERO;
 
     /** Годовая ставка, %. */
-    @Column(name = "rate_pct", nullable = false)
-    private double ratePct;
+    @Column(name = "rate_pct", nullable = false, precision = 9, scale = 4)
+    private BigDecimal ratePct = Money.ZERO;
 
     @Column(name = "opened_on", nullable = false)
     private LocalDate openedOn;

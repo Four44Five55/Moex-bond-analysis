@@ -151,8 +151,9 @@ public class MoexBondParser {
         return result;
     }
 
-    private boolean isSuspicious(double ytm) {
-        return ytm > SUSPICIOUS_YIELD_PCT || ytm < 0;
+    /** Неизвестная доходность подозрительной не считается: подозревать нечего. */
+    private boolean isSuspicious(Double ytm) {
+        return ytm != null && (ytm > SUSPICIOUS_YIELD_PCT || ytm < 0);
     }
 
     private boolean isInvalid(Bond bond) {

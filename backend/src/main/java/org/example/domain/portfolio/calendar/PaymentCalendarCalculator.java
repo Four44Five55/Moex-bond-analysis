@@ -1,8 +1,10 @@
 package org.example.domain.portfolio.calendar;
 
+import org.example.domain.money.Money;
 import org.example.domain.portfolio.IncomeKind;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -47,23 +49,22 @@ public class PaymentCalendarCalculator {
 
         List<PaymentCalendarMonth> result = new ArrayList<>(months);
         buckets.forEach((month, bucket) -> result.add(bucket.toMonth(month)));
+        BigDecimal averageNet = Money.divide(horizon.net, Money.of(months));
         return new PaymentCalendar(List.copyOf(result), horizon.gross, horizon.net,
-                horizon.net / months, horizon.slices(), horizon.principalReturn());
+                averageNet, horizon.slices(), horizon.principalReturn());
     }
 
     private static final class Bucket {
         /** EnumMap — порядок видов выплат один и тот же во всех месяцах. */
-        private final Map<IncomeKind, double[]> byKind = new EnumMap<>(IncomeKind.class);
-        private double gross;
-        private double net;
+        private final Map<IncomeKind, Sums> byKind = new EnumMap<>(IncomeKind.class);
+        private BigDecimal gross = Money.ZERO;
+        private BigDecimal net = Money.ZERO;
         private int count;
 
         private void add(PaymentCalendarEntry e) {
-            double[] sums = byKind.computeIfAbsent(e.kind(), k -> new double[2]);
-            sums[0] += e.gross();
-            sums[1] += e.net();
-            gross += e.gross();
-            net += e.net();
+            byKind.computeIfAbsent(e.kind(), k -> new Sums()).add(e);
+            gross = gross.add(e.gross());
+            net = net.add(e.net());
             count++;
         }
 
@@ -73,14 +74,29 @@ public class PaymentCalendarCalculator {
 
         private List<PaymentKindSlice> slices() {
             return byKind.entrySet().stream()
-                    .map(en -> new PaymentKindSlice(en.getKey(), en.getValue()[0], en.getValue()[1]))
+                    .map(en -> new PaymentKindSlice(en.getKey(), en.getValue().gross, en.getValue().net))
                     .toList();
         }
 
         /** Амортизация — возврат тела долга, а не доход: в календаре она есть, в доходе её быть не должно. */
-        private double principalReturn() {
-            double[] sums = byKind.get(IncomeKind.AMORTIZATION);
-            return sums == null ? 0.0 : sums[0];
+        private BigDecimal principalReturn() {
+            Sums sums = byKind.get(IncomeKind.AMORTIZATION);
+            return sums == null ? Money.ZERO : sums.gross;
+        }
+    }
+
+    /**
+     * Пара накопителей на один вид выплат. Раньше это был {@code double[2]}, что на
+     * {@link BigDecimal} не работает: массив хранил бы ссылки, и «прибавить» пришлось бы
+     * записью обратно по индексу — с именованными полями это и короче, и понятнее.
+     */
+    private static final class Sums {
+        private BigDecimal gross = Money.ZERO;
+        private BigDecimal net = Money.ZERO;
+
+        private void add(PaymentCalendarEntry e) {
+            gross = gross.add(e.gross());
+            net = net.add(e.net());
         }
     }
 }

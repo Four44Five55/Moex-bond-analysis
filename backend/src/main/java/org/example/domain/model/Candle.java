@@ -29,9 +29,22 @@ public class Candle {
     @Column(nullable = false)
     private Instant ts;
 
+    /**
+     * Свечи без цен не бывает — поля примитивные, а значит колонки обязаны быть
+     * NOT NULL DEFAULT (см. V9): на NULL Hibernate роняет чтение всей свечи.
+     */
+    @Column(nullable = false)
     private double open;
+
+    @Column(nullable = false)
     private double high;
+
+    @Column(nullable = false)
     private double low;
+
+    @Column(nullable = false)
     private double close;
+
+    @Column(nullable = false)
     private double volume;
 }

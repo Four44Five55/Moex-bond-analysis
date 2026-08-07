@@ -1,5 +1,6 @@
 package org.example.domain.portfolio;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -10,7 +11,7 @@ public record IncomeEvent(
         LocalDate date,
         String secId,
         IncomeKind kind,
-        double gross,
+        BigDecimal gross,
         boolean estimate
 ) {
 }

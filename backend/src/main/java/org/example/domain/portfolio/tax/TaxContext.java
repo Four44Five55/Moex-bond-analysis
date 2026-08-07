@@ -3,6 +3,7 @@ package org.example.domain.portfolio.tax;
 import org.example.domain.model.Account;
 import org.example.domain.portfolio.RealizedSale;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -12,7 +13,7 @@ import java.util.List;
 public record TaxContext(
         Account account,
         List<RealizedSale> sales,
-        double couponIncome,
-        double dividendIncome
+        BigDecimal couponIncome,
+        BigDecimal dividendIncome
 ) {
 }

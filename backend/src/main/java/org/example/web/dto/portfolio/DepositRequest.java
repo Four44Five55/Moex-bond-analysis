@@ -6,13 +6,14 @@ import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.example.domain.model.PayoutPeriod;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /** Заведение или правка вклада. */
 public record DepositRequest(
         @NotBlank String name,
-        @Positive double principal,
-        @PositiveOrZero double ratePct,
+        @NotNull @Positive BigDecimal principal,
+        @NotNull @PositiveOrZero BigDecimal ratePct,
         @NotNull LocalDate openedOn,
         @NotNull LocalDate maturesOn,
         boolean capitalized,

@@ -1,17 +1,17 @@
 package org.example.application.portfolio;
 
-import org.assertj.core.data.Offset;
 import org.example.domain.model.Bond;
 import org.example.domain.model.Share;
+import org.example.domain.money.Money;
 import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class InstrumentPricingTest {
 
-    private static final Offset<Double> TOLERANCE = Offset.offset(1e-9);
-
-    private static Bond bond(double price, double accruedInterest) {
+    private static Bond bond(Double price, double accruedInterest) {
         Bond bond = new Bond();
         bond.setSecId("RU000A0TEST1");
         bond.setFaceValue(1000.0);
@@ -22,13 +22,15 @@ class InstrumentPricingTest {
 
     @Test
     void bondQuoteIsPercentOfFaceValue() {
-        assertThat(InstrumentPricing.moneyPerUnit(bond(98.5, 0), 98.5)).isCloseTo(985.0, TOLERANCE);
+        assertThat(InstrumentPricing.moneyPerUnit(bond(98.5, 0), Money.of("98.5")))
+                .isEqualByComparingTo("985");
     }
 
     @Test
     void tradePriceIncludesAccruedInterest() {
-        assertThat(InstrumentPricing.tradeMoneyPerUnit(bond(98.5, 0), 98.5, 12.34))
-                .isCloseTo(985.0 + 12.34, TOLERANCE);
+        assertThat(InstrumentPricing.tradeMoneyPerUnit(
+                bond(98.5, 0), Money.of("98.5"), Money.of("12.34")))
+                .isEqualByComparingTo("997.34");
     }
 
     @Test
@@ -36,17 +38,17 @@ class InstrumentPricingTest {
         // Купили по 98.5 + НКД 12.34, цена не изменилась → позиция не в убытке на размер НКД
         Bond bond = bond(98.5, 12.34);
 
-        double cost = InstrumentPricing.tradeMoneyPerUnit(bond, 98.5, 12.34);
-        assertThat(InstrumentPricing.currentPositionMoneyPerUnit(bond)).isCloseTo(cost, TOLERANCE);
-        assertThat(InstrumentPricing.currentMoneyPerUnit(bond)).isCloseTo(985.0, TOLERANCE);
+        BigDecimal cost = InstrumentPricing.tradeMoneyPerUnit(
+                bond, Money.of("98.5"), Money.of("12.34"));
+        assertThat(InstrumentPricing.currentPositionMoneyPerUnit(bond)).isEqualByComparingTo(cost);
+        assertThat(InstrumentPricing.currentMoneyPerUnit(bond)).isEqualByComparingTo("985");
     }
 
     @Test
     void unknownPriceStaysZeroAndDoesNotBecomeBareAccruedInterest() {
-        Bond bond = bond(0, 12.34);
-        bond.setLastPrice(null);
+        Bond bond = bond(null, 12.34);
 
-        assertThat(InstrumentPricing.currentPositionMoneyPerUnit(bond)).isZero();
+        assertThat(InstrumentPricing.currentPositionMoneyPerUnit(bond)).isEqualByComparingTo("0");
     }
 
     @Test
@@ -55,7 +57,9 @@ class InstrumentPricingTest {
         share.setSecId("SBER");
         share.setLastPrice(250.0);
 
-        assertThat(InstrumentPricing.currentPositionMoneyPerUnit(share)).isCloseTo(250.0, TOLERANCE);
-        assertThat(InstrumentPricing.tradeMoneyPerUnit(share, 250.0, 0)).isCloseTo(250.0, TOLERANCE);
+        assertThat(InstrumentPricing.currentPositionMoneyPerUnit(share))
+                .isEqualByComparingTo("250");
+        assertThat(InstrumentPricing.tradeMoneyPerUnit(share, Money.of("250"), Money.ZERO))
+                .isEqualByComparingTo("250");
     }
 }

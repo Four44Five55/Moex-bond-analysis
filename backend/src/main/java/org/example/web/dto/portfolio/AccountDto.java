@@ -4,6 +4,7 @@ import org.example.domain.model.Account;
 import org.example.domain.model.AccountType;
 import org.example.domain.model.IisType;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 public record AccountDto(
@@ -11,8 +12,8 @@ public record AccountDto(
         String name,
         AccountType type,
         IisType iisType,
-        double defaultCommissionPct,
-        double baseTaxRate,
+        BigDecimal defaultCommissionPct,
+        BigDecimal baseTaxRate,
         Instant createdAt
 ) {
     public static AccountDto from(Account a) {

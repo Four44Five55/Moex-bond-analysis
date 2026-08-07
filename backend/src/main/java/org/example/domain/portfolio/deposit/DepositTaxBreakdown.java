@@ -1,5 +1,9 @@
 package org.example.domain.portfolio.deposit;
 
+import org.example.domain.money.Money;
+
+import java.math.BigDecimal;
+
 /**
  * Налог с процентов по вкладам за календарный год.
  *
@@ -11,15 +15,16 @@ package org.example.domain.portfolio.deposit;
  *                       поэтому её видно рядом с результатом, а не только в логах
  */
 public record DepositTaxBreakdown(
-        double interestIncome,
-        double deduction,
-        double taxableIncome,
-        double tax,
-        double keyRatePct,
+        BigDecimal interestIncome,
+        BigDecimal deduction,
+        BigDecimal taxableIncome,
+        BigDecimal tax,
+        BigDecimal keyRatePct,
         String notes
 ) {
 
     public static DepositTaxBreakdown zero() {
-        return new DepositTaxBreakdown(0, 0, 0, 0, 0, "Вкладов нет");
+        return new DepositTaxBreakdown(
+                Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, "Вкладов нет");
     }
 }

@@ -3,8 +3,10 @@ package org.example.domain.portfolio;
 import org.example.domain.model.AmortizationPayment;
 import org.example.domain.model.CouponPayment;
 import org.example.domain.model.DividendPayment;
+import org.example.domain.money.Money;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -20,7 +22,7 @@ import java.util.List;
 @Component
 public class IncomeForecaster {
 
-    public List<IncomeEvent> bondIncome(String secId, double quantity,
+    public List<IncomeEvent> bondIncome(String secId, BigDecimal quantity,
                                         List<CouponPayment> coupons,
                                         List<AmortizationPayment> amortizations,
                                         LocalDate from) {
@@ -29,21 +31,22 @@ public class IncomeForecaster {
             if (!c.date().isBefore(from)) {
                 // Незафиксированный купон флоатера доходит сюда оценкой и таким же должен показаться
                 events.add(new IncomeEvent(c.date(), secId, IncomeKind.COUPON,
-                        c.perBond() * quantity, c.estimated()));
+                        Money.of(c.perBond()).multiply(quantity), c.estimated()));
             }
         }
         for (AmortizationPayment a : amortizations) {
             if (!a.date().isBefore(from)) {
-                events.add(new IncomeEvent(a.date(), secId, IncomeKind.AMORTIZATION, a.perBond() * quantity, false));
+                events.add(new IncomeEvent(a.date(), secId, IncomeKind.AMORTIZATION,
+                        Money.of(a.perBond()).multiply(quantity), false));
             }
         }
         return events;
     }
 
-    public List<IncomeEvent> dividendIncome(String secId, double quantity,
+    public List<IncomeEvent> dividendIncome(String secId, BigDecimal quantity,
                                             List<DividendPayment> dividends,
                                             LocalDate from) {
-        if (quantity <= 0) {
+        if (!Money.isPositive(quantity)) {
             return List.of();
         }
         // Только реально объявленные MOEX выплаты с будущей датой закрытия реестра.
@@ -54,7 +57,7 @@ public class IncomeForecaster {
                 .filter(d -> !d.recordDate().isBefore(from))
                 .sorted(Comparator.comparing(DividendPayment::recordDate))
                 .map(d -> new IncomeEvent(d.recordDate(), secId, IncomeKind.DIVIDEND,
-                        d.perShare() * quantity, false))
+                        Money.of(d.perShare()).multiply(quantity), false))
                 .toList();
     }
 }

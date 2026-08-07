@@ -2,6 +2,7 @@ package org.example.application;
 
 import org.example.domain.model.Account;
 import org.example.domain.model.Deposit;
+import org.example.domain.money.Money;
 import org.example.domain.portfolio.deposit.DepositCalculator;
 import org.example.domain.portfolio.deposit.InterestAccrual;
 import org.example.infrastructure.persistence.DepositRepository;
@@ -10,6 +11,7 @@ import org.example.web.dto.portfolio.DepositRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
@@ -95,7 +97,7 @@ public class DepositService {
     }
 
     private DepositDto toDto(Deposit d, LocalDate today, Map<Long, String> accountNames) {
-        double value = depositCalculator.valueOn(d, today);
+        BigDecimal value = depositCalculator.valueOn(d, today);
         boolean matured = !today.isBefore(d.getMaturesOn());
         LocalDate nextPayout = depositCalculator.payouts(d).stream()
                 .map(InterestAccrual::date)
@@ -105,7 +107,8 @@ public class DepositService {
 
         return new DepositDto(d.getId(), d.getName(), d.getPrincipal(), d.getRatePct(),
                 d.getOpenedOn(), d.getMaturesOn(), d.isCapitalized(), d.getPayoutPeriod(), d.getNote(),
-                value, value - d.getPrincipal(), depositCalculator.totalInterest(d),
+                Money.round(value), Money.round(value.subtract(d.getPrincipal())),
+                Money.round(depositCalculator.totalInterest(d)),
                 nextPayout, matured, d.getSourceAccountId(),
                 d.getSourceAccountId() == null ? null : accountNames.get(d.getSourceAccountId()));
     }

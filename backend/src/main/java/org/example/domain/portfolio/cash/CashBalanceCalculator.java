@@ -1,9 +1,11 @@
 package org.example.domain.portfolio.cash;
 
 import org.example.domain.model.TradeSide;
+import org.example.domain.money.Money;
 import org.example.domain.portfolio.PricedTrade;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -25,13 +27,15 @@ public class CashBalanceCalculator {
      * @param trades         сделки счёта, приведённые к деньгам
      * @param receivedIncome фактически полученные купоны, амортизации и дивиденды (gross)
      */
-    public double balance(double externalNet, List<PricedTrade> trades, double receivedIncome) {
-        double fromTrades = 0;
+    public BigDecimal balance(BigDecimal externalNet, List<PricedTrade> trades,
+                              BigDecimal receivedIncome) {
+        BigDecimal fromTrades = Money.ZERO;
         for (PricedTrade t : trades) {
-            double money = t.quantity() * t.moneyPerUnit();
-            fromTrades += (t.side() == TradeSide.BUY ? -money : money) - t.commission();
+            BigDecimal money = t.gross();
+            BigDecimal signed = t.side() == TradeSide.BUY ? money.negate() : money;
+            fromTrades = fromTrades.add(signed).subtract(t.commission());
         }
-        return externalNet + fromTrades + receivedIncome;
+        return externalNet.add(fromTrades).add(receivedIncome);
     }
 
     /**
@@ -47,8 +51,8 @@ public class CashBalanceCalculator {
      *
      * @param cashTracked ведётся ли по счёту учёт денег — то есть заведено ли хоть одно движение
      */
-    public double reportedBalance(boolean cashTracked, double externalNet,
-                                  List<PricedTrade> trades, double receivedIncome) {
-        return cashTracked ? balance(externalNet, trades, receivedIncome) : 0.0;
+    public BigDecimal reportedBalance(boolean cashTracked, BigDecimal externalNet,
+                                      List<PricedTrade> trades, BigDecimal receivedIncome) {
+        return cashTracked ? balance(externalNet, trades, receivedIncome) : Money.ZERO;
     }
 }

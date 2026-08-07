@@ -1,5 +1,6 @@
 package org.example.domain.portfolio;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 
@@ -8,14 +9,14 @@ import java.time.temporal.ChronoUnit;
  * себестоимость и выручку (с учётом комиссий).
  */
 public record RealizedSale(
-        double quantity,
+        BigDecimal quantity,
         LocalDate buyDate,
         LocalDate sellDate,
-        double cost,
-        double proceeds
+        BigDecimal cost,
+        BigDecimal proceeds
 ) {
-    public double pnl() {
-        return proceeds - cost;
+    public BigDecimal pnl() {
+        return proceeds.subtract(cost);
     }
 
     /** Полных лет владения (для ЛДВ). */

@@ -1,5 +1,7 @@
 package org.example.web.dto.portfolio;
 
+import java.math.BigDecimal;
+
 /**
  * Три разных величины, которые легко перепутать и нельзя складывать:
  * <ul>
@@ -22,18 +24,18 @@ package org.example.web.dto.portfolio;
  *                     {@code null}, если неизвестно, сколько внесено
  */
 public record PortfolioSummaryDto(
-        double invested,
-        double marketValue,
-        double cashBalance,
-        double totalValue,
-        Double externalIn,
-        Double totalProfit,
-        double unrealizedPnl,
-        double realizedPnl,
-        double totalCommission,
-        double receivedIncome,
-        double projectedAnnualIncome,
-        double estimatedTax,
+        BigDecimal invested,
+        BigDecimal marketValue,
+        BigDecimal cashBalance,
+        BigDecimal totalValue,
+        BigDecimal externalIn,
+        BigDecimal totalProfit,
+        BigDecimal unrealizedPnl,
+        BigDecimal realizedPnl,
+        BigDecimal totalCommission,
+        BigDecimal receivedIncome,
+        BigDecimal projectedAnnualIncome,
+        BigDecimal estimatedTax,
         int positionsCount
 ) {
 }

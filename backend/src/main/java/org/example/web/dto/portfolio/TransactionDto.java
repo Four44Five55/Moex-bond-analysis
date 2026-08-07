@@ -3,6 +3,7 @@ package org.example.web.dto.portfolio;
 import org.example.domain.model.TradeSide;
 import org.example.domain.model.Transaction;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -15,10 +16,10 @@ public record TransactionDto(
         String secName,
         TradeSide side,
         LocalDate tradeDate,
-        double quantity,
-        double price,
-        double aci,
-        double commission,
+        BigDecimal quantity,
+        BigDecimal price,
+        BigDecimal aci,
+        BigDecimal commission,
         String note
 ) {
     public static TransactionDto from(Transaction t, String secName) {

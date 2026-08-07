@@ -3,7 +3,9 @@ package org.example.domain.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.example.domain.money.Money;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
@@ -36,12 +38,15 @@ public class Account {
     private IisType iisType;
 
     /** Комиссия брокера по умолчанию, % от суммы сделки. */
-    @Column(name = "default_commission_pct", nullable = false)
-    private double defaultCommissionPct;
+    @Column(name = "default_commission_pct", nullable = false, precision = 9, scale = 4)
+    private BigDecimal defaultCommissionPct = Money.ZERO;
 
-    /** Базовая ставка НДФЛ, %. */
-    @Column(name = "base_tax_rate", nullable = false)
-    private double baseTaxRate = 13.0;
+    /**
+     * Базовая ставка НДФЛ, %. Литерал, а не {@code TaxRates.BASE_PCT}: домен налогов уже зависит
+     * от счёта ({@code TaxContext}), и ссылка отсюда замкнула бы пакеты в цикл.
+     */
+    @Column(name = "base_tax_rate", nullable = false, precision = 9, scale = 4)
+    private BigDecimal baseTaxRate = Money.of("13.00");
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();

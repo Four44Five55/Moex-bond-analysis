@@ -1,6 +1,7 @@
 package org.example.application;
 
 import org.example.application.portfolio.InstrumentPricing;
+import org.example.domain.money.Money;
 import org.example.domain.analysis.BondAnalyzer;
 import org.example.domain.analysis.DividendSummary;
 import org.example.domain.analysis.DividendYieldCalculator;
@@ -147,7 +148,7 @@ public class InstrumentService {
         }
 
         NavigableMap<LocalDate, Double> historicalPrices = historicalPrices(secId, inst, payouts);
-        double currentPrice = InstrumentPricing.currentMoneyPerUnit(inst);
+        double currentPrice = Money.toDouble(InstrumentPricing.currentMoneyPerUnit(inst));
 
         return payouts.stream()
                 .map(p -> new InstrumentPaymentDto(p.date(), p.kind(), p.perUnit(), p.currency(),
@@ -193,7 +194,7 @@ public class InstrumentService {
             TreeMap<LocalDate, Double> prices = new TreeMap<>();
             for (var candle : candleService.getCandles(secId, DAILY_INTERVAL, earliest.get(), today)) {
                 prices.put(Instant.ofEpochSecond(candle.time()).atZone(ZoneOffset.UTC).toLocalDate(),
-                        InstrumentPricing.moneyPerUnit(inst, candle.close()));
+                        Money.toDouble(InstrumentPricing.moneyPerUnit(inst, Money.of(candle.close()))));
             }
             return prices;
         } catch (RuntimeException e) {

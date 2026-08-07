@@ -2,6 +2,7 @@ package org.example.web.dto.portfolio;
 
 import org.example.domain.portfolio.IncomeKind;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -15,8 +16,8 @@ public record IncomeEventDto(
         String secId,
         String secName,
         IncomeKind kind,
-        double gross,
-        double net,
+        BigDecimal gross,
+        BigDecimal net,
         boolean estimate,
         String accountName
 ) {

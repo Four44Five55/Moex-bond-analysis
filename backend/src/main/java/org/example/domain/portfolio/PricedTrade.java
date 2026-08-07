@@ -2,6 +2,7 @@ package org.example.domain.portfolio;
 
 import org.example.domain.model.TradeSide;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -11,8 +12,12 @@ import java.time.LocalDate;
 public record PricedTrade(
         TradeSide side,
         LocalDate date,
-        double quantity,
-        double moneyPerUnit,
-        double commission
+        BigDecimal quantity,
+        BigDecimal moneyPerUnit,
+        BigDecimal commission
 ) {
+    /** Стоимость сделки без комиссии. */
+    public BigDecimal gross() {
+        return quantity.multiply(moneyPerUnit);
+    }
 }
