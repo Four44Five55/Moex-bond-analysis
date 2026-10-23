@@ -1,6 +1,7 @@
 package org.example.web.mapper;
 
 import org.example.domain.model.Bond;
+import org.example.domain.model.BondDefaultFlags;
 import org.example.domain.model.Instrument;
 import org.example.domain.model.Share;
 import org.example.web.dto.InstrumentDto;
@@ -13,7 +14,7 @@ public final class InstrumentMapper {
 
     public static InstrumentDto toDto(Instrument instrument) {
         if (instrument instanceof Bond bond) {
-            return fromBond(bond);
+            return fromBond(bond, BondDefaultFlags.of(bond));
         }
         if (instrument instanceof Share share) {
             return fromShare(share);
@@ -43,11 +44,22 @@ public final class InstrumentMapper {
                 s.getLotSize(),
                 s.getCapitalization(),
                 s.getSector(),
-                s.getListLevel()
+                s.getListLevel(),
+                null, null
         );
     }
 
-    private static InstrumentDto fromBond(Bond b) {
+    /**
+     * Карточка облигации с признаками дефолта, уточнёнными по описанию бумаги: в справочнике
+     * их может не быть, если выпуск уже ушёл из списка торгов.
+     */
+    public static InstrumentDto toDto(Bond bond, BondDefaultFlags flags) {
+        return fromBond(bond, flags);
+    }
+
+    private static InstrumentDto fromBond(Bond b, BondDefaultFlags flags) {
+        // Уровень листинга о дефолте ничего не знает: у бумаги, которая не платит, надёжность минимальная
+        boolean defaulted = flags.hasDefault();
         return new InstrumentDto(
                 b.getSecId(),
                 b.getType(),
@@ -74,8 +86,8 @@ public final class InstrumentMapper {
                 b.getNextCouponDate(),
                 b.getIssueDate(),
                 b.getIssuerRating(),
-                b.getReliabilityScore(),
-                b.isInvestmentGrade(),
+                defaulted ? Integer.valueOf(1) : b.getReliabilityScore(),
+                !defaulted && b.isInvestmentGrade(),
                 b.isCallable(),
                 b.isPuttable(),
                 b.isSuspiciousYield(),
@@ -84,7 +96,9 @@ public final class InstrumentMapper {
                 b.getOfferDate(),
                 // акционные — не применимо
                 null, null, null,
-                b.getListLevel()
+                b.getListLevel(),
+                flags.hasDefault(),
+                flags.hasTechnicalDefault()
         );
     }
 }

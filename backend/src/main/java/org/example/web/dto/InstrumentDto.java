@@ -49,6 +49,10 @@ public record InstrumentDto(
         Integer lotSize,
         Double capitalization,
         String sector,
-        Integer listLevel
+        Integer listLevel,
+
+        // Дефолт (облигации)
+        Boolean hasDefault,
+        Boolean hasTechnicalDefault
 ) {
 }

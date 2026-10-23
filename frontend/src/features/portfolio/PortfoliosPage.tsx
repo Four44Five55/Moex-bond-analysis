@@ -6,6 +6,7 @@ import { portfolioApi } from "./api";
 import { DonutChart } from "../../shared/charts/DonutChart";
 import { DepositsPanel } from "./DepositsPanel";
 import { PaymentCalendarPanel } from "./PaymentCalendarPanel";
+import { DefaultLossPanel } from "./DefaultLossPanel";
 import { num, pct, changeColor } from "../../shared/lib/format";
 import type { AccountRequest, AccountType, ConsolidatedOverview, IisType } from "./types";
 
@@ -129,6 +130,8 @@ export function PortfoliosPage() {
 
           {/* Ближайшие выплаты живут в календаре: тот же список, но с помесячными суммами */}
           <PaymentCalendarPanel />
+
+          <DefaultLossPanel />
         </>
       )}
 

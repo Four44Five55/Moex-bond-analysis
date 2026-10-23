@@ -23,6 +23,8 @@ public class MoexBondParser {
     private static final double DAYS_PER_YEAR = 365.0;
     /** Порог аномальной доходности (сырьё MOEX иногда содержит YTM в сотни %). */
     private static final double SUSPICIOUS_YIELD_PCT = 100.0;
+    /** Режим «Т+: Облигации Д» — на нём MOEX торгует только выпусками в дефолте. */
+    private static final String DEFAULT_BOARD = "TQRD";
 
     private final ReliabilityScorer reliabilityScorer;
 
@@ -60,7 +62,19 @@ public class MoexBondParser {
     private static Bond preferPriced(Bond existing, Bond candidate) {
         boolean existingPriced = existing.getLastPrice() != null && existing.getLastPrice() > 0;
         boolean candidatePriced = candidate.getLastPrice() != null && candidate.getLastPrice() > 0;
-        return !existingPriced && candidatePriced ? candidate : existing;
+        Bond chosen = !existingPriced && candidatePriced ? candidate : existing;
+        // Дефолт — свойство выпуска, а не режима: торгуйся бумага в TQRD хоть на одном из них
+        if (existing.isHasDefault() || candidate.isHasDefault()) {
+            markDefaulted(chosen);
+        }
+        return chosen;
+    }
+
+    /** Надёжность бумаги в дефолте — минимальная, сколь бы высок ни был уровень листинга. */
+    private static void markDefaulted(Bond bond) {
+        bond.setHasDefault(true);
+        bond.setReliabilityScore(1);
+        bond.setInvestmentGrade(false);
     }
 
     private Bond toBond(MoexTable.Row row, Map<String, Double> durationBySecId) {
@@ -100,6 +114,9 @@ public class MoexBondParser {
             }
 
             reliabilityScorer.score(bond, row.getInt("LISTLEVEL"));
+            if (DEFAULT_BOARD.equals(bond.getBoard())) {
+                markDefaulted(bond);
+            }
             bond.setSuspiciousYield(isSuspicious(bond.getYieldToMaturity()));
             bond.setUpdatedAt(Instant.now());
 

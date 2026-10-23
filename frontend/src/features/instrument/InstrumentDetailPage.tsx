@@ -162,6 +162,8 @@ export function InstrumentDetailPage() {
           <div className="detail-title">
             <span className={`tag tag-${i.type.toLowerCase()}`}>{i.type === "BOND" ? "Облигация" : "Акция"}</span>
             <h1>{i.shortName ?? i.secId}</h1>
+            {i.hasDefault && <span className="tag tag-default">Дефолт</span>}
+            {!i.hasDefault && i.hasTechnicalDefault && <span className="tag tag-tech">Тех. дефолт</span>}
             <button className={isWatched(i.secId) ? "star-btn on" : "star-btn"} onClick={() => toggle(i.secId)}>
               ★
             </button>
@@ -245,6 +247,20 @@ export function InstrumentDetailPage() {
 
       <section className="panel">
         <h2>{i.type === "BOND" ? "Купоны и амортизация" : "История дивидендов"}</h2>
+        {i.hasDefault && (
+          <div className="default-banner">
+            Эмитент допустил дефолт. Ниже — график по проспекту выпуска: MOEX продолжает его
+            показывать, но платежи после дефолта не поступали. В портфеле будущие выплаты по
+            бумаге не учитываются, а дату, с которой деньги перестали приходить, можно указать
+            в позиции счёта.
+          </div>
+        )}
+        {!i.hasDefault && i.hasTechnicalDefault && (
+          <div className="default-banner">
+            По выпуску был технический дефолт — задержка платежа. Если просрочку не закрыли,
+            отметьте дату в позиции счёта, и портфель перестанет считать эти выплаты полученными.
+          </div>
+        )}
         {payments.isLoading && <div className="loading">Загрузка…</div>}
         {payments.data && payments.data.length === 0 && (
           <div className="empty">Нет данных о выплатах в MOEX.</div>

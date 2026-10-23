@@ -6,5 +6,7 @@ public enum IncomeKind {
     AMORTIZATION,
     DIVIDEND,
     /** Проценты по банковскому вкладу. */
-    INTEREST
+    INTEREST,
+    /** Возмещение по бумаге в дефолте — только среди полученного, в прогнозе его не бывает. */
+    RECOVERY
 }

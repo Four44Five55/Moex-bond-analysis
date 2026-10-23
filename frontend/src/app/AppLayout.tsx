@@ -4,10 +4,10 @@ import { instrumentsApi } from "../shared/api/endpoints";
 import { GlobalSearch } from "../features/instruments/GlobalSearch";
 
 const navItems = [
-  { to: "/", label: "Дашборд", end: true },
+  { to: "/portfolio", label: "Портфель" },
+  { to: "/dashboard", label: "Дашборд" },
   { to: "/bonds", label: "Облигации" },
   { to: "/shares", label: "Акции" },
-  { to: "/portfolio", label: "Портфель" },
   { to: "/watchlist", label: "Избранное" },
   { to: "/compare", label: "Сравнение" },
 ];
@@ -23,14 +23,13 @@ export function AppLayout() {
     <div className="layout">
       <header className="topbar">
         <div className="brand">
-          <span className="logo">◆</span> MOEX Analytics
+          <span className="logo">◆</span> Инвестиционный блокнот
         </div>
         <nav className="nav">
           {navItems.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
-              end={n.end}
               className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
             >
               {n.label}

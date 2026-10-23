@@ -73,6 +73,7 @@ public class InstrumentService {
     private final CandleService candleService;
     private final ReturnsCalculator returnsCalculator;
     private final DividendYieldCalculator dividendYieldCalculator;
+    private final BondDefaultService bondDefaultService;
 
     public InstrumentService(BondRepository bondRepository,
                              ShareRepository shareRepository,
@@ -82,7 +83,9 @@ public class InstrumentService {
                              BondHistoryProvider bondHistory,
                              CandleService candleService,
                              ReturnsCalculator returnsCalculator,
-                             DividendYieldCalculator dividendYieldCalculator) {
+                             DividendYieldCalculator dividendYieldCalculator,
+                             BondDefaultService bondDefaultService) {
+        this.bondDefaultService = bondDefaultService;
         this.bondRepository = bondRepository;
         this.shareRepository = shareRepository;
         this.instrumentRepository = instrumentRepository;
@@ -279,9 +282,11 @@ public class InstrumentService {
     /** Детальная карточка инструмента по коду бумаги. */
     @Cacheable(cacheNames = "instrument", key = "#secId")
     public InstrumentDto getBySecId(String secId) {
-        return instrumentRepository.findBySecId(secId)
-                .map(InstrumentMapper::toDto)
+        Instrument instrument = instrumentRepository.findBySecId(secId)
                 .orElseThrow(() -> new NotFoundException("Инструмент не найден: " + secId));
+        return instrument instanceof Bond bond
+                ? InstrumentMapper.toDto(bond, bondDefaultService.flags(bond))
+                : InstrumentMapper.toDto(instrument);
     }
 
     /** Инструменты для сравнения бок-о-бок, в порядке переданных кодов. */

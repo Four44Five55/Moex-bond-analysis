@@ -201,6 +201,32 @@ tbody tr:hover { background: var(--panel-2); }
 }
 .tag-bond { background: #21324a; color: #7fb0ff; }
 .tag-share { background: #2a2340; color: #b79bff; }
+.tag-default { background: #4a1f24; color: #ff8a8f; margin-left: 6px; }
+.tag-tech { background: #4a3a17; color: #f5c46b; margin-left: 6px; }
+
+/* Предупреждение о дефолте: график MOEX показывает выплаты, которых не будет */
+.default-banner {
+  border: 1px solid #6b2a30;
+  background: #2a1519;
+  color: #ffb3b6;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.default-inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.default-inline input { width: 110px; }
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline dotted;
+}
+.link-btn:disabled { opacity: 0.5; cursor: default; }
+.default-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 /* Pager */
 .pager { display: flex; align-items: center; justify-content: center; gap: 16px; color: var(--muted); }

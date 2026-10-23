@@ -83,6 +83,18 @@ public class Bond extends Instrument {
     @Column(name = "suspicious_yield", nullable = false)
     private boolean suspiciousYield;
 
+    /**
+     * Эмитент допустил дефолт. Синхронизация ставит признак по режиму торгов TQRD
+     * («Облигации Д»), карточка и портфель дополнительно сверяются с описанием бумаги MOEX:
+     * погашенный в дефолте выпуск из списка торгов исчезает, и его запись здесь не обновляется.
+     */
+    @Column(name = "has_default", nullable = false)
+    private boolean hasDefault;
+
+    /** Допущен технический дефолт — задержка платежа, которую эмитент ещё может закрыть. */
+    @Column(name = "has_technical_default", nullable = false)
+    private boolean hasTechnicalDefault;
+
     @Override
     public InstrumentType getType() {
         return InstrumentType.BOND;

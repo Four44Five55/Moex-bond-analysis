@@ -1,7 +1,7 @@
 export type AccountType = "BROKERAGE" | "IIS";
 export type IisType = "A" | "B";
 export type TradeSide = "BUY" | "SELL";
-export type IncomeKind = "COUPON" | "AMORTIZATION" | "DIVIDEND" | "INTEREST";
+export type IncomeKind = "COUPON" | "AMORTIZATION" | "DIVIDEND" | "INTEREST" | "RECOVERY";
 export type PayoutPeriod = "MONTHLY" | "QUARTERLY" | "SEMIANNUAL" | "ANNUAL" | "AT_MATURITY";
 
 export interface Account {
@@ -58,6 +58,68 @@ export interface Position {
   marketValue: number;
   unrealizedPnl: number;
   unrealizedPct: number;
+  /** DEFAULT — выплат не ждём, TECHNICAL — биржа видела просрочку, null — бумага платит. */
+  defaultStatus: "DEFAULT" | "TECHNICAL" | null;
+  /** С этой даты платежи графика не считаются полученными. */
+  paymentsStoppedOn: string | null;
+  /** Дату назвал инвестор; false — приложение подставило «сегодня» по признаку MOEX. */
+  defaultConfirmed: boolean;
+}
+
+/** Возмещение по бумаге в дефолте: реструктуризация, банкротство — суммой на позицию. */
+export interface Recovery {
+  id: number;
+  secId: string;
+  receivedOn: string;
+  amount: number;
+  note: string | null;
+}
+
+export interface RecoveryRequest {
+  secId: string;
+  receivedOn: string;
+  amount: number;
+  note?: string | null;
+}
+
+/**
+ * Потери от дефолта. Две группы, которые нельзя складывать: деньги инвестора
+ * (вложено → возвращено → потеряно) и долг эмитента по графику (недополучено).
+ */
+export interface DefaultLoss {
+  quantity: number;
+  invested: number;
+  saleProceeds: number;
+  couponsReceived: number;
+  principalReceived: number;
+  recovered: number;
+  marketValue: number;
+  missedCoupons: number;
+  missedPrincipal: number;
+  futureCoupons: number;
+  futurePrincipal: number;
+  capitalReturned: number;
+  capitalLoss: number;
+  netResult: number;
+  recoveryRatePct: number;
+}
+
+export interface DefaultPosition {
+  accountId: number;
+  accountName: string;
+  secId: string;
+  name: string;
+  moexDefault: boolean;
+  moexTechnicalDefault: boolean;
+  paymentsStoppedOn: string;
+  confirmed: boolean;
+  note: string | null;
+  loss: DefaultLoss;
+}
+
+export interface DefaultReport {
+  positions: DefaultPosition[];
+  totals: DefaultLoss;
 }
 
 export type CashDirection = "IN" | "OUT";

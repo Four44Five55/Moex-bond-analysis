@@ -42,6 +42,16 @@ public class RedisConfig {
     }
 
     /**
+     * Признак дефолта выпуска меняется раз в жизни бумаги, а спрашивается на каждый пересчёт
+     * портфеля — по запросу к MOEX на каждую облигацию. Пяти минут здесь мало.
+     */
+    @Bean
+    public RedisCacheManagerBuilderCustomizer bondDefaultCacheTtl(RedisCacheConfiguration base) {
+        return builder -> builder.withCacheConfiguration("bondDefault",
+                base.entryTtl(Duration.ofHours(6)));
+    }
+
+    /**
      * Записывает имя класса в JSON, иначе record-DTO, даты и enum'ы не восстанавливаются.
      * <p>
      * Список разрешённых пакетов ограничен намеренно: валидатор вида {@code allowIfSubType(Object.class)}

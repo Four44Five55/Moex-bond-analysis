@@ -1,13 +1,14 @@
 package org.example.web.v1;
 
+import jakarta.validation.Valid;
+import org.example.application.BondDefaultService;
 import org.example.application.PortfolioService;
 import org.example.web.dto.portfolio.ConsolidatedOverviewDto;
+import org.example.web.dto.portfolio.DefaultMarkRequest;
+import org.example.web.dto.portfolio.DefaultReportDto;
 import org.example.web.dto.portfolio.PaymentCalendarDto;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * Сводка по всем счетам клиента. Вынесена из {@code /accounts}, потому что путь
@@ -21,9 +22,12 @@ public class ConsolidatedPortfolioController {
     private static final String CLIENT = "X-Client-Id";
 
     private final PortfolioService portfolioService;
+    private final BondDefaultService bondDefaultService;
 
-    public ConsolidatedPortfolioController(PortfolioService portfolioService) {
+    public ConsolidatedPortfolioController(PortfolioService portfolioService,
+                                           BondDefaultService bondDefaultService) {
         this.portfolioService = portfolioService;
+        this.bondDefaultService = bondDefaultService;
     }
 
     @GetMapping("/overview")
@@ -36,5 +40,28 @@ public class ConsolidatedPortfolioController {
     public PaymentCalendarDto calendar(@RequestHeader(CLIENT) String clientId,
                                        @RequestParam(defaultValue = "12") int months) {
         return portfolioService.calendar(clientId, months);
+    }
+
+    /** Потери от дефолтов по всем счетам: вложено, возвращено, недополучено. */
+    @GetMapping("/defaults")
+    public DefaultReportDto defaults(@RequestHeader(CLIENT) String clientId) {
+        return portfolioService.defaultReport(clientId);
+    }
+
+    /** Отметить, с какой даты по бумаге не поступают выплаты (повторный вызов заменяет дату). */
+    @PutMapping("/defaults/{secId}")
+    public ResponseEntity<Void> markDefault(@RequestHeader(CLIENT) String clientId,
+                                            @PathVariable String secId,
+                                            @Valid @RequestBody DefaultMarkRequest req) {
+        bondDefaultService.mark(clientId, secId, req);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Снять отметку: бумага снова считается по графику MOEX (или по признаку дефолта биржи). */
+    @DeleteMapping("/defaults/{secId}")
+    public ResponseEntity<Void> unmarkDefault(@RequestHeader(CLIENT) String clientId,
+                                              @PathVariable String secId) {
+        bondDefaultService.unmark(clientId, secId);
+        return ResponseEntity.noContent().build();
     }
 }

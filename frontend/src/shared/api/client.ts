@@ -32,6 +32,14 @@ export function apiPost<T>(path: string, body?: unknown, withClient = false): Pr
   }).then((r) => handle<T>(r));
 }
 
+export function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-Client-Id": getClientId() },
+    body: JSON.stringify(body),
+  }).then((r) => handle<T>(r));
+}
+
 export function apiDelete<T>(path: string, withClient = false): Promise<T> {
   return fetch(`${BASE}${path}`, {
     method: "DELETE",

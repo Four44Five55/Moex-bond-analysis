@@ -13,7 +13,9 @@ export const router = createBrowserRouter([
     path: "/",
     element: <AppLayout />,
     children: [
-      { index: true, element: <DashboardPage /> },
+      // Блокнот открывается на своём портфеле; рыночный дашборд — отдельная вкладка
+      { index: true, element: <Navigate to="/portfolio" replace /> },
+      { path: "dashboard", element: <DashboardPage /> },
       { path: "bonds", element: <InstrumentsPage type="BOND" /> },
       { path: "shares", element: <InstrumentsPage type="SHARE" /> },
       { path: "instrument/:secId", element: <InstrumentDetailPage /> },

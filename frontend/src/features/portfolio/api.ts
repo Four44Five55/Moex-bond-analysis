@@ -1,4 +1,4 @@
-import { apiGetWithClient, apiPost, apiDelete } from "../../shared/api/client";
+import { apiGetWithClient, apiPost, apiPut, apiDelete } from "../../shared/api/client";
 import type {
   AciBackfill,
   Account,
@@ -9,6 +9,7 @@ import type {
   CashMovement,
   CashMovementRequest,
   ConsolidatedOverview,
+  DefaultReport,
   Deposit,
   DepositRequest,
   IncomeEvent,
@@ -17,6 +18,8 @@ import type {
   PortfolioOverview,
   PortfolioSummary,
   Position,
+  Recovery,
+  RecoveryRequest,
   TaxBreakdown,
   Transaction,
 } from "./types";
@@ -31,6 +34,19 @@ export const portfolioApi = {
   /** Календарь выплат по всем счетам и вкладам на months месяцев вперёд. */
   calendar: (months: number) =>
     apiGetWithClient<PaymentCalendar>(`/portfolio/calendar?months=${months}`),
+
+  /** Потери от дефолтов по всем счетам. */
+  defaults: () => apiGetWithClient<DefaultReport>("/portfolio/defaults"),
+  /** С какой даты по бумаге не поступают выплаты — отметка общая для всех счетов. */
+  markDefault: (secId: string, paymentsStoppedOn: string, note?: string | null) =>
+    apiPut<void>(`/portfolio/defaults/${secId}`, { paymentsStoppedOn, note: note ?? null }),
+  unmarkDefault: (secId: string) => apiDelete<void>(`/portfolio/defaults/${secId}`, true),
+
+  listRecoveries: (id: number) => apiGetWithClient<Recovery[]>(`${A}/${id}/recoveries`),
+  addRecovery: (id: number, req: RecoveryRequest) =>
+    apiPost<Recovery>(`${A}/${id}/recoveries`, req, true),
+  deleteRecovery: (id: number, recoveryId: number) =>
+    apiDelete<void>(`${A}/${id}/recoveries/${recoveryId}`, true),
 
   listAccounts: () => apiGetWithClient<Account[]>(A),
   getAccount: (id: number) => apiGetWithClient<Account>(`${A}/${id}`),

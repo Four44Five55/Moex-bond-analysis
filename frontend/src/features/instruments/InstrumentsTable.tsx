@@ -13,7 +13,17 @@ interface Column {
 }
 
 const bondColumns: Column[] = [
-  { key: "shortName", title: "Название", sortable: true, render: (i) => i.shortName ?? i.secId },
+  {
+    key: "shortName",
+    title: "Название",
+    sortable: true,
+    render: (i) => (
+      <>
+        {i.shortName ?? i.secId}
+        {i.hasDefault && <span className="tag tag-default" title="Торгуется в режиме «Облигации Д»">Дефолт</span>}
+      </>
+    ),
+  },
   { key: "yieldToMaturity", title: "Доходность", sortable: true, numeric: true, render: (i) => pct(i.yieldToMaturity) },
   { key: "duration", title: "Дюрация, лет", sortable: true, numeric: true, render: (i) => num(i.duration) },
   { key: "couponRate", title: "Купон", sortable: true, numeric: true, render: (i) => pct(i.couponRate) },

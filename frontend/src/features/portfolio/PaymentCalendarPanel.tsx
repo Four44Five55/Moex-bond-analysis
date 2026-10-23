@@ -12,6 +12,7 @@ const KIND_LABEL: Record<IncomeKind, string> = {
   AMORTIZATION: "Амортизация",
   DIVIDEND: "Дивиденды",
   INTEREST: "Проценты по вкладам",
+  RECOVERY: "Возмещение", // в календаре не бывает — только среди полученного, но тип общий
 };
 
 /**
@@ -24,6 +25,7 @@ const KIND_COLOR: Record<IncomeKind, string> = {
   AMORTIZATION: "#d95926",
   DIVIDEND: "#199e70",
   INTEREST: "#c98500",
+  RECOVERY: "#8b94a7",
 };
 
 const MONTH_SHORT = new Intl.DateTimeFormat("ru-RU", { month: "short" });

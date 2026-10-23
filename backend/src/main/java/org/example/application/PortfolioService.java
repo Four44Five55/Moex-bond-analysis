@@ -16,6 +16,11 @@ import org.example.domain.portfolio.cash.CashBalanceCalculator;
 import org.example.domain.portfolio.deposit.DepositCalculator;
 import org.example.domain.portfolio.deposit.DepositTaxBreakdown;
 import org.example.domain.portfolio.deposit.DepositTaxCalculator;
+import org.example.domain.portfolio.defaults.DefaultLoss;
+import org.example.domain.portfolio.defaults.DefaultLossCalculator;
+import org.example.domain.portfolio.defaults.DefaultPolicy;
+import org.example.domain.portfolio.defaults.DefaultState;
+import org.example.infrastructure.persistence.DefaultRecoveryRepository;
 import org.example.infrastructure.persistence.CashMovementRepository;
 import org.example.domain.portfolio.history.CashFlow;
 import org.example.domain.portfolio.history.DatedTrade;
@@ -35,6 +40,9 @@ import org.example.web.dto.portfolio.AllocationSliceDto;
 import org.example.web.dto.portfolio.CalendarKindDto;
 import org.example.web.dto.portfolio.CalendarMonthDto;
 import org.example.web.dto.portfolio.ConsolidatedOverviewDto;
+import org.example.web.dto.portfolio.DefaultLossDto;
+import org.example.web.dto.portfolio.DefaultPositionDto;
+import org.example.web.dto.portfolio.DefaultReportDto;
 import org.springframework.beans.factory.annotation.Value;
 import org.example.web.dto.portfolio.IncomeEventDto;
 import org.example.web.dto.portfolio.PaymentCalendarDto;
@@ -97,6 +105,9 @@ public class PortfolioService {
     private final DepositTaxCalculator depositTaxCalculator;
     private final PaymentCalendarCalculator paymentCalendarCalculator;
     private final KeyRateService keyRateService;
+    private final BondDefaultService bondDefaultService;
+    private final DefaultRecoveryRepository recoveryRepository;
+    private final DefaultLossCalculator defaultLossCalculator;
 
     public PortfolioService(AccountService accountService,
                             TransactionRepository transactionRepository,
@@ -116,7 +127,13 @@ public class PortfolioService {
                             DepositCalculator depositCalculator,
                             DepositTaxCalculator depositTaxCalculator,
                             PaymentCalendarCalculator paymentCalendarCalculator,
-                            KeyRateService keyRateService) {
+                            KeyRateService keyRateService,
+                            BondDefaultService bondDefaultService,
+                            DefaultRecoveryRepository recoveryRepository,
+                            DefaultLossCalculator defaultLossCalculator) {
+        this.bondDefaultService = bondDefaultService;
+        this.recoveryRepository = recoveryRepository;
+        this.defaultLossCalculator = defaultLossCalculator;
         this.cashMovementRepository = cashMovementRepository;
         this.cashBalanceCalculator = cashBalanceCalculator;
         this.depositService = depositService;
@@ -163,20 +180,23 @@ public class PortfolioService {
      * @param cashMovements пополнения и выводы; пустой список означает, что учёт денег по счёту
      *                      не ведётся, и это меняет и остаток ({@link #freeCash}),
      *                      и способ расчёта доходности (см. {@link #capitalFlows})
+     * @param defaults      какие платежи графика MOEX по бумагам счёта настоящие
+     * @param recoveries    возмещение по бумагам в дефолте, полученное на этот счёт
      */
     private record Snapshot(Account account, List<Transaction> transactions,
                             Map<String, Instrument> instruments,
                             List<PricedTrade> pricedTrades,
                             List<CashMovement> cashMovements,
                             List<PositionView> positions,
-                            List<RealizedSale> realizedSales, BigDecimal totalCommission) {
+                            List<RealizedSale> realizedSales, BigDecimal totalCommission,
+                            DefaultPolicy defaults, List<DefaultRecovery> recoveries) {
     }
 
     // --- Публичные операции ---
 
     public List<PositionDto> positions(String clientId, Long accountId) {
         Snapshot s = snapshot(accountService.getOwned(clientId, accountId));
-        return s.positions().stream().map(this::toDto).toList();
+        return s.positions().stream().map(p -> toDto(p, s.defaults())).toList();
     }
 
     public List<IncomeEventDto> income(String clientId, Long accountId) {
@@ -199,7 +219,9 @@ public class PortfolioService {
         Account account = accountService.getOwned(clientId, accountId);
         List<Transaction> txns = transactionRepository.findByAccountIdOrderByTradeDateAscIdAsc(account.getId());
         Map<String, Instrument> instruments = loadInstruments(txns);
-        return toReceivedDtos(realizedIncomeEvents(txns, instruments), account, instruments);
+        DefaultPolicy defaults = bondDefaultService.policyFor(account.getClientId(), instruments.values());
+        return toReceivedDtos(realizedIncomeEvents(txns, instruments, defaults, recoveries(account)),
+                account, instruments);
     }
 
     /**
@@ -219,11 +241,11 @@ public class PortfolioService {
         List<IncomeEvent> forecast = rawIncomeEvents(s);
         ProjectedIncome annual = projectedAnnualIncome(forecast);
         TaxBreakdown tax = computeTax(account, s.realizedSales(), annual);
-        List<IncomeEvent> realized = realizedIncomeEvents(s.transactions(), s.instruments());
+        List<IncomeEvent> realized = realizedIncomeEvents(s);
 
         return new PortfolioOverviewDto(
                 summaryOf(s, annual, tax.totalTax(), realized),
-                s.positions().stream().map(this::toDto).toList(),
+                s.positions().stream().map(p -> toDto(p, s.defaults())).toList(),
                 forecast.stream().map(e -> toIncomeDto(e, account, couponTaxable, s.instruments())).toList(),
                 toReceivedDtos(realized, account, s.instruments()),
                 tax);
@@ -279,7 +301,7 @@ public class PortfolioService {
 
             List<IncomeEvent> forecast = rawIncomeEvents(s);
             ProjectedIncome annual = projectedAnnualIncome(forecast);
-            List<IncomeEvent> realizedIncome = realizedIncomeEvents(s.transactions(), s.instruments());
+            List<IncomeEvent> realizedIncome = realizedIncomeEvents(s);
 
             totals.invested = totals.invested.add(accountInvested);
             totals.marketValue = totals.marketValue.add(accountValue);
@@ -305,7 +327,7 @@ public class PortfolioService {
                 typeHoldings.add(new Holding(byTypeDimension.categoryOf(p.instrument()), p.marketValue()));
             }
             forecast.forEach(e -> upcoming.add(toIncomeDto(e, account, couponTaxable, s.instruments())));
-            flows.addAll(capitalFlows(s.transactions(), s.instruments(), s.cashMovements()));
+            flows.addAll(capitalFlows(s.transactions(), s.instruments(), s.cashMovements(), realizedIncome));
         }
 
         LocalDate today = LocalDate.now();
@@ -544,9 +566,8 @@ public class PortfolioService {
             from = to; // сделки, датированные будущим — ряд вырождается в одну точку
         }
 
-        Map<String, Instrument> instruments = instrumentRepository
-                .findAllBySecIdIn(txns.stream().map(Transaction::getSecId).distinct().toList())
-                .stream().collect(Collectors.toMap(Instrument::getSecId, i -> i));
+        Map<String, Instrument> instruments = loadInstruments(txns);
+        DefaultPolicy defaults = bondDefaultService.policyFor(account.getClientId(), instruments.values());
 
         PortfolioValueRequest.Builder request = PortfolioValueRequest.builder(from, to)
                 .trades(toDatedTrades(txns, instruments));
@@ -561,11 +582,12 @@ public class PortfolioService {
         List<CashMovement> movements = cashMovementRepository
                 .findByAccountIdOrderByMovedOnAscIdAsc(account.getId());
         BigDecimal positionsValue = Money.sum(
-                foldBySecurity(txns, instruments).positions(), PositionView::marketValue);
-        BigDecimal cash = freeCash(movements, pricedTrades(txns, instruments),
-                realizedIncomeEvents(txns, instruments), fundedDeposits(account));
+                foldBySecurity(txns, instruments, defaults).positions(), PositionView::marketValue);
+        List<IncomeEvent> realized = realizedIncomeEvents(txns, instruments, defaults, recoveries(account));
+        BigDecimal cash = freeCash(movements, pricedTrades(txns, instruments), realized,
+                fundedDeposits(account));
         double terminal = Money.toDouble(positionsValue.add(cash));
-        Double xirr = computeXirr(capitalFlows(txns, instruments, movements), terminal, to);
+        Double xirr = computeXirr(capitalFlows(txns, instruments, movements, realized), terminal, to);
 
         return new PortfolioHistoryDto(
                 toPointDtos(pinToCurrentValue(series, positionsValue)),
@@ -672,9 +694,9 @@ public class PortfolioService {
      * (потоки одного знака корня не имеют).
      */
     private List<CashFlow> capitalFlows(List<Transaction> txns, Map<String, Instrument> instruments,
-                                        List<CashMovement> movements) {
+                                        List<CashMovement> movements, List<IncomeEvent> realized) {
         if (movements.isEmpty()) {
-            return tradeAndIncomeFlows(txns, instruments);
+            return tradeAndIncomeFlows(txns, instruments, realized);
         }
         return movements.stream()
                 .map(m -> new CashFlow(m.getMovedOn(), -Money.toDouble(m.signedAmount())))
@@ -730,7 +752,8 @@ public class PortfolioService {
      * для сводки по всем счетам — суммарная рыночная стоимость.
      */
     private List<CashFlow> tradeAndIncomeFlows(List<Transaction> txns,
-                                               Map<String, Instrument> instruments) {
+                                               Map<String, Instrument> instruments,
+                                               List<IncomeEvent> realized) {
         List<CashFlow> flows = new ArrayList<>();
         for (Transaction t : txns) {
             BigDecimal money = InstrumentPricing
@@ -741,8 +764,7 @@ public class PortfolioService {
                     : money.subtract(t.getCommission());
             flows.add(new CashFlow(t.getTradeDate(), Money.toDouble(signed)));
         }
-        realizedIncomeEvents(txns, instruments)
-                .forEach(e -> flows.add(new CashFlow(e.date(), Money.toDouble(e.gross()))));
+        realized.forEach(e -> flows.add(new CashFlow(e.date(), Money.toDouble(e.gross()))));
         return flows;
     }
 
@@ -753,8 +775,7 @@ public class PortfolioService {
         // Прогноз считается один раз и переиспользуется в налоге — обход выплат ходит во внешний источник
         ProjectedIncome annual = projectedAnnualIncome(rawIncomeEvents(s));
         BigDecimal estimatedTax = computeTax(account, s.realizedSales(), annual).totalTax();
-        return summaryOf(s, annual, estimatedTax,
-                realizedIncomeEvents(s.transactions(), s.instruments()));
+        return summaryOf(s, annual, estimatedTax, realizedIncomeEvents(s));
     }
 
     private PortfolioSummaryDto summaryOf(Snapshot s, ProjectedIncome annual,
@@ -800,6 +821,58 @@ public class PortfolioService {
         return externalIn == null ? null : totalValue.subtract(externalIn);
     }
 
+    /**
+     * Сводка потерь по бумагам в дефолте на всех счетах клиента: сколько своих денег потеряно,
+     * сколько купонов и номинала эмитент не заплатил и сколько удалось вернуть.
+     * <p>
+     * Строка — пара «счёт × бумага»: возмещение приходит на конкретный счёт, и количество на дату
+     * каждого платежа тоже своё. В отчёт попадает всякая бумага, по которой клиент хоть раз
+     * совершал сделки, — и уже проданная: убыток от продажи в TQRD — тоже потеря от дефолта.
+     */
+    public DefaultReportDto defaultReport(String clientId) {
+        LocalDate today = LocalDate.now();
+        List<DefaultPositionDto> rows = new ArrayList<>();
+        DefaultLoss total = DefaultLoss.zero();
+        for (Account account : accountService.list(clientId)) {
+            Snapshot s = snapshot(account);
+            for (var entry : groupBySecId(s.transactions()).entrySet()) {
+                String secId = entry.getKey();
+                DefaultState state = s.defaults().state(secId);
+                if (state == null || !state.defaulted()) {
+                    continue;
+                }
+                DefaultLoss loss = defaultLoss(s, secId, entry.getValue(), state.cutoff(), today);
+                total = total.plus(loss);
+                Instrument inst = s.instruments().get(secId);
+                rows.add(new DefaultPositionDto(account.getId(), account.getName(), secId,
+                        inst == null ? secId : inst.getShortName(),
+                        state.moex().hasDefault(), state.moex().hasTechnicalDefault(),
+                        state.cutoff(), state.confirmed(), state.note(),
+                        DefaultLossDto.from(loss.rounded())));
+            }
+        }
+        return new DefaultReportDto(rows, DefaultLossDto.from(total.rounded()));
+    }
+
+    private DefaultLoss defaultLoss(Snapshot s, String secId, List<Transaction> txns,
+                                    LocalDate cutoff, LocalDate today) {
+        BigDecimal recovered = s.recoveries().stream()
+                .filter(r -> r.getSecId().equals(secId) && !r.getReceivedOn().isAfter(today))
+                .map(DefaultRecovery::getAmount)
+                .reduce(Money.ZERO, BigDecimal::add);
+        List<CouponPayment> coupons = List.of();
+        List<AmortizationPayment> amortizations = List.of();
+        try {
+            coupons = corporateActions.coupons(secId);
+            amortizations = corporateActions.amortizations(secId);
+        } catch (RuntimeException e) {
+            // Без графика не посчитать недополученное, но вложенное и оценка от него не зависят
+            log.warn("График выплат по {} недоступен, недополученное не посчитано: {}", secId, e.getMessage());
+        }
+        return defaultLossCalculator.compute(pricedTrades(txns, s.instruments()), coupons, amortizations,
+                recovered, InstrumentPricing.currentMoneyPerUnit(s.instruments().get(secId)), cutoff, today);
+    }
+
     // --- Ядро расчёта ---
 
     private Snapshot snapshot(Account account) {
@@ -809,10 +882,16 @@ public class PortfolioService {
         BigDecimal totalCommission = Money.sum(txns, Transaction::getCommission);
 
         Map<String, Instrument> instruments = loadInstruments(txns);
-        Folded folded = foldBySecurity(txns, instruments);
+        DefaultPolicy defaults = bondDefaultService.policyFor(account.getClientId(), instruments.values());
+        Folded folded = foldBySecurity(txns, instruments, defaults);
 
         return new Snapshot(account, txns, instruments, pricedTrades(txns, instruments), movements,
-                folded.positions(), folded.realizedSales(), totalCommission);
+                folded.positions(), folded.realizedSales(), totalCommission,
+                defaults, recoveries(account));
+    }
+
+    private List<DefaultRecovery> recoveries(Account account) {
+        return recoveryRepository.findByAccountIdOrderByReceivedOnAscIdAsc(account.getId());
     }
 
     /** Результат FIFO-свёртки по всем бумагам счёта. */
@@ -827,7 +906,8 @@ public class PortfolioService {
      * расходился с XIRR на странице портфеля на всю разницу между ценой последней сделки
      * и ценой закрытия свечи — а у облигаций ещё и на весь НКД.
      */
-    private Folded foldBySecurity(List<Transaction> txns, Map<String, Instrument> instruments) {
+    private Folded foldBySecurity(List<Transaction> txns, Map<String, Instrument> instruments,
+                                  DefaultPolicy defaults) {
         List<PositionView> positions = new ArrayList<>();
         List<RealizedSale> realized = new ArrayList<>();
 
@@ -839,9 +919,12 @@ public class PortfolioService {
             BigDecimal qty = fifo.openQuantity();
             if (Money.isPositive(qty)) {
                 BigDecimal openCost = fifo.openCost();
-                // Грязная цена: себестоимость лота уже содержит уплаченный НКД
-                BigDecimal marketValue = InstrumentPricing
-                        .currentPositionMoneyPerUnit(inst).multiply(qty);
+                // Грязная цена: себестоимость лота уже содержит уплаченный НКД. Кроме дефолта:
+                // купон, которого не заплатят, не копится, и биржевой НКД — лишь арифметика графика
+                BigDecimal perUnit = defaults.defaulted(entry.getKey())
+                        ? InstrumentPricing.currentMoneyPerUnit(inst)
+                        : InstrumentPricing.currentPositionMoneyPerUnit(inst);
+                BigDecimal marketValue = perUnit.multiply(qty);
                 positions.add(new PositionView(inst, entry.getKey(), qty, openCost,
                         marketValue, marketValue.subtract(openCost)));
             }
@@ -861,12 +944,21 @@ public class PortfolioService {
                 .collect(Collectors.toMap(Instrument::getSecId, i -> i));
     }
 
+    private List<IncomeEvent> realizedIncomeEvents(Snapshot s) {
+        return realizedIncomeEvents(s.transactions(), s.instruments(), s.defaults(), s.recoveries());
+    }
+
     /**
      * Реально полученные выплаты по истории сделок: событие в прошлом × позиция на дату отсечки.
      * Карта инструментов передаётся вызывающим — он её уже загрузил.
+     * <p>
+     * Платежи графика с даты дефолта бумаги не засчитываются: MOEX показывает их по проспекту,
+     * а денег не было. Взамен идёт то, что инвестор реально получил после дефолта, — возмещение.
      */
     private List<IncomeEvent> realizedIncomeEvents(List<Transaction> txns,
-                                                   Map<String, Instrument> instruments) {
+                                                   Map<String, Instrument> instruments,
+                                                   DefaultPolicy defaults,
+                                                   List<DefaultRecovery> recoveries) {
         Map<String, List<Transaction>> bySec = groupBySecId(txns);
         LocalDate today = LocalDate.now();
         List<IncomeEvent> events = new ArrayList<>();
@@ -877,10 +969,14 @@ public class PortfolioService {
             try {
                 if (inst instanceof Bond) {
                     for (var c : corporateActions.coupons(secId)) {
-                        addRealized(events, secId, IncomeKind.COUPON, c.date(), c.perBond(), ts, today);
+                        if (defaults.paid(secId, c.date())) {
+                            addRealized(events, secId, IncomeKind.COUPON, c.date(), c.perBond(), ts, today);
+                        }
                     }
                     for (var a : corporateActions.amortizations(secId)) {
-                        addRealized(events, secId, IncomeKind.AMORTIZATION, a.date(), a.perBond(), ts, today);
+                        if (defaults.paid(secId, a.date())) {
+                            addRealized(events, secId, IncomeKind.AMORTIZATION, a.date(), a.perBond(), ts, today);
+                        }
                     }
                 } else if (inst instanceof Share) {
                     for (var d : corporateActions.dividends(secId)) {
@@ -889,6 +985,12 @@ public class PortfolioService {
                 }
             } catch (RuntimeException e) {
                 log.warn("История выплат по {} пропущена: {}", secId, e.getMessage());
+            }
+        }
+        for (DefaultRecovery r : recoveries) {
+            if (!r.getReceivedOn().isAfter(today)) {
+                events.add(new IncomeEvent(r.getReceivedOn(), r.getSecId(), IncomeKind.RECOVERY,
+                        r.getAmount(), false));
             }
         }
         return events;
@@ -936,6 +1038,8 @@ public class PortfolioService {
                 log.warn("Прогноз дохода по {} пропущен: {}", p.secId(), e.getMessage());
             }
         }
+        // Эмитент в дефолте: график MOEX дальше — только проспект, ждать по нему нечего
+        events.removeIf(e -> !s.defaults().paid(e.secId(), e.date()));
         events.sort(Comparator.comparing(IncomeEvent::date));
         return events;
     }
@@ -968,7 +1072,7 @@ public class PortfolioService {
 
     // --- Мапперы ---
 
-    private PositionDto toDto(PositionView p) {
+    private PositionDto toDto(PositionView p, DefaultPolicy defaults) {
         BigDecimal avgCost = Money.isPositive(p.quantity())
                 ? Money.roundUnit(Money.divide(p.openCost(), p.quantity()))
                 : Money.ZERO;
@@ -977,9 +1081,24 @@ public class PortfolioService {
                 : Money.of(p.instrument().getLastPrice());
         InstrumentType type = p.instrument() != null ? p.instrument().getType() : null;
         String name = p.instrument() != null ? p.instrument().getShortName() : p.secId();
+        DefaultState state = defaults.state(p.secId());
         return new PositionDto(p.secId(), type, name, p.quantity(), avgCost,
                 Money.round(p.openCost()), currentPrice, Money.round(p.marketValue()),
-                Money.round(p.unrealizedPnl()), Money.percentOf(p.unrealizedPnl(), p.openCost()));
+                Money.round(p.unrealizedPnl()), Money.percentOf(p.unrealizedPnl(), p.openCost()),
+                defaultStatus(state),
+                state == null ? null : state.cutoff(),
+                state != null && state.confirmed());
+    }
+
+    /** {@code DEFAULT} — выплат не ждём, {@code TECHNICAL} — биржа видела просрочку, {@code null} — платит. */
+    private static String defaultStatus(DefaultState state) {
+        if (state == null) {
+            return null;
+        }
+        if (state.defaulted()) {
+            return "DEFAULT";
+        }
+        return state.moex().hasTechnicalDefault() ? "TECHNICAL" : null;
     }
 
     /** Полученные выплаты — новыми вперёд. */
@@ -1005,6 +1124,8 @@ public class PortfolioService {
             // Проценты вкладов сюда не попадают (у них свой путь), но ветка обязана существовать:
             // налог по ним считается от годовой суммы всех вкладов, а не с отдельной выплаты
             case INTEREST -> e.gross();
+            // Возмещение возвращает часть вложенного: дохода тут нет
+            case RECOVERY -> e.gross();
             case COUPON -> couponTaxable ? afterTax(e.gross(), account.getBaseTaxRate()) : e.gross();
             case DIVIDEND -> afterTax(e.gross(), TaxRates.DIVIDEND_PCT);
         };

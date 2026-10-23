@@ -84,7 +84,7 @@ class RedisConfigTest {
                 1000.0, 7.0, 13.4, 8.2, null, 789.0, 70.0, 2,
                 LocalDate.of(2036, 7, 30), LocalDate.of(2026, 1, 14), LocalDate.of(2021, 5, 26),
                 null, 8, true, false, false, false, 12.3, 8.87, null,
-                null, null, null, 1);
+                null, null, null, 1, false, false);
 
         PagedResponse<InstrumentDto> page = new PagedResponse<>(
                 List.of(bond), 0, 50, 1, 1, new SummaryDto(1, 13.4, 8.0, 1.0, 13.4));

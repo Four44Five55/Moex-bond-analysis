@@ -43,11 +43,13 @@ class InstrumentServiceTest {
     @Mock CorporateActionsProvider corporateActions;
     @Mock BondHistoryProvider bondHistory;
     @Mock CandleService candleService;
+    @Mock BondDefaultService bondDefaultService;
 
     private InstrumentService service() {
         return new InstrumentService(bondRepository, shareRepository,
                 instrumentRepository, bondAnalyzer, corporateActions, bondHistory,
-                candleService, new ReturnsCalculator(), new DividendYieldCalculator());
+                candleService, new ReturnsCalculator(), new DividendYieldCalculator(),
+                bondDefaultService);
     }
 
     @Test

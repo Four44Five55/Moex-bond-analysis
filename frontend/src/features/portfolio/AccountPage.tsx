@@ -5,6 +5,8 @@ import { portfolioApi } from "./api";
 import { AciBackfillPanel } from "./AciBackfillPanel";
 import { AddTransactionForm } from "./AddTransactionForm";
 import { CashPanel } from "./CashPanel";
+import { DefaultMarkControl } from "./DefaultMarkControl";
+import { RecoveriesPanel } from "./RecoveriesPanel";
 import { DonutChart } from "../../shared/charts/DonutChart";
 import { LineChart } from "../../shared/charts/LineChart";
 import { ShowMore } from "../../shared/ui/ShowMore";
@@ -38,6 +40,7 @@ const incomeLabel: Record<IncomeKind, string> = {
   AMORTIZATION: "Амортизация",
   DIVIDEND: "Дивиденд",
   INTEREST: "Проценты", // вклады к счёту не привязаны, но тип общий на весь календарь выплат
+  RECOVERY: "Возмещение",
 };
 
 export function AccountPage() {
@@ -69,6 +72,12 @@ export function AccountPage() {
     queryFn: () => portfolioApi.valueSeries(id, historyMonths),
   });
   const txns = useQuery({ queryKey: ["account", id, "txns"], queryFn: () => portfolioApi.listTransactions(id) });
+  // Бумаги в дефолте берём из отчёта о потерях, а не из позиций: возмещение приходит
+  // и по уже проданной бумаге
+  const defaults = useQuery({ queryKey: ["accounts", "defaults"], queryFn: portfolioApi.defaults });
+  const defaultedBonds = (defaults.data?.positions ?? [])
+    .filter((p) => p.accountId === id)
+    .map((p) => ({ secId: p.secId, name: p.name }));
 
   const removeTxn = useMutation({
     mutationFn: (txId: number) => portfolioApi.deleteTransaction(id, txId),
@@ -206,7 +215,20 @@ export function AccountPage() {
                 {positions.map((p) => (
                   <tr key={p.secId}>
                     <td><Link to={`/instrument/${p.secId}`} className="link">{p.secId}</Link></td>
-                    <td>{p.name}</td>
+                    <td>
+                      {p.name}
+                      {p.defaultStatus === "DEFAULT" && <span className="tag tag-default">Дефолт</span>}
+                      {p.defaultStatus === "TECHNICAL" && <span className="tag tag-tech">Тех. дефолт</span>}
+                      {p.defaultStatus && (
+                        <div className="default-sub">
+                          <DefaultMarkControl
+                            secId={p.secId}
+                            stoppedOn={p.paymentsStoppedOn}
+                            confirmed={p.defaultConfirmed}
+                          />
+                        </div>
+                      )}
+                    </td>
                     <td className="num">{num(p.quantity, 0)}</td>
                     <td className="num">{num(p.avgCost)}</td>
                     <td className="num">{num(p.invested)}</td>
@@ -352,6 +374,8 @@ export function AccountPage() {
         )}
         <div className="hint">Учтены только выплаты, где на дату отсечки у тебя реально была позиция (× количество на тот момент).</div>
       </section>
+
+      <RecoveriesPanel accountId={id} bonds={defaultedBonds} />
 
       <CashPanel accountId={id} balance={s?.cashBalance} />
 

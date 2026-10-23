@@ -39,6 +39,9 @@ export interface Instrument {
   capitalization: number | null;
   sector: string | null;
   listLevel: number | null;
+  // дефолт (облигации): признаки MOEX — «допущен когда-либо», а не «длится сейчас»
+  hasDefault: boolean | null;
+  hasTechnicalDefault: boolean | null;
 }
 
 export interface Summary {
